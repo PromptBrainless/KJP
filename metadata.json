@@ -1,0 +1,6 @@
+{
+  "name": "Deeskalation KJP",
+  "description": "Wissenschaftliche Referenz und interaktiver Begleiter für deeskalierende Gesprächsführung auf kinder- und jugendpsychiatrischen Akutstationen (Safewards, Polyvagal-Theorie, GFK, DBT, Mentalisierung).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
