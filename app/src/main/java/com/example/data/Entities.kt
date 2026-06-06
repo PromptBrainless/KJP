@@ -49,3 +49,17 @@ data class TeamLearning(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+@Entity(tableName = "icd_diagnoses")
+data class IcdDiagnosis(
+    @PrimaryKey val codeOrId: String, // e.g., "6D70" or "ADHS"
+    val code: String,                // e.g., "6D70.1" or "F90.0"
+    val name: String,                // e.g., "ADHS (Aufmerk..."
+    val dynamik: String,             // Escalation dynamics
+    val absicherung: String,         // Pillar 1 deescalation
+    val klaerung: String,            // Pillar 2 deescalation
+    val aufloesung: String,          // Pillar 3 deescalation
+    val customNotes: String = "",    // Individual/user customized notes
+    val isCustom: Boolean = false,   // True if custom-created, false if standard or live-API imported
+    val createdAt: Long = System.currentTimeMillis()
+)
+

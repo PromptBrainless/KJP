@@ -45,4 +45,17 @@ interface DeeskalationDao {
 
     @Query("DELETE FROM team_learnings WHERE id = :id")
     suspend fun deleteTeamLearningById(id: Int)
+
+    // ICD Diagnosis / Symptom Customization APIs
+    @Query("SELECT * FROM icd_diagnoses ORDER BY createdAt DESC")
+    fun getAllIcdDiagnoses(): Flow<List<IcdDiagnosis>>
+
+    @Query("SELECT * FROM icd_diagnoses WHERE codeOrId = :codeOrId LIMIT 1")
+    suspend fun getIcdDiagnosisById(codeOrId: String): IcdDiagnosis?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertIcdDiagnosis(diagnosis: IcdDiagnosis)
+
+    @Query("DELETE FROM icd_diagnoses WHERE codeOrId = :codeOrId")
+    suspend fun deleteIcdDiagnosisById(codeOrId: String)
 }

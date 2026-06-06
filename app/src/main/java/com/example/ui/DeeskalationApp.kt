@@ -59,6 +59,11 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
     val cmsSections by viewModel.allCmsSections.collectAsStateWithLifecycle()
     val teamLearnings by viewModel.allTeamLearnings.collectAsStateWithLifecycle()
 
+    val icdDiagnoses by viewModel.allIcdDiagnoses.collectAsStateWithLifecycle()
+    val icdSearchResults by viewModel.icdSearchResults.collectAsStateWithLifecycle()
+    val icdSearchInProgress by viewModel.icdSearchInProgress.collectAsStateWithLifecycle()
+    val icdSearchError by viewModel.icdSearchError.collectAsStateWithLifecycle()
+
     val breathingPhase by viewModel.breathingPhase.collectAsStateWithLifecycle()
     val breathingSeconds by viewModel.breathingSecondsLeft.collectAsStateWithLifecycle()
     val breathingCycles by viewModel.breathingCycleCount.collectAsStateWithLifecycle()
@@ -213,7 +218,8 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
             ) {
                 val menuTabs = mutableListOf(
                     Triple("HANDBUCH", "Handbuch", Icons.Default.Info),
-                    Triple("TOOLS", "Praxis-Tools", Icons.Default.Star)
+                    Triple("TOOLS", "Praxis-Tools", Icons.Default.Star),
+                    Triple("ICD_WORKSPACE", "ICD-Symptome", Icons.Default.Search)
                 )
                 if (isAdminUnlocked) {
                     menuTabs.add(Triple("ADMIN", "CMS Admin", Icons.Default.Settings))
@@ -261,7 +267,8 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
                         selectedDiagnosisId = selectedDiagnosisId,
                         onDiagnosisSelected = { viewModel.setSelectedDiagnosisId(it) },
                         cmsSections = cmsSections,
-                        onNavigateToTools = { main, sub -> viewModel.navigateToTools(main, sub) }
+                        onNavigateToTools = { main, sub -> viewModel.navigateToTools(main, sub) },
+                        icdDiagnoses = icdDiagnoses
                     )
                     "TOOLS" -> ToolsScreen(
                         breathingPhase = breathingPhase,
@@ -287,8 +294,24 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
                         onSaveTeamLearning = { situation, help, role ->
                             viewModel.saveTeamLearning(situation, help, role)
                         },
-                        onDeleteTeamLearning = { id -> viewModel.deleteTeamLearning(id) }
+                        onDeleteTeamLearning = { id -> viewModel.deleteTeamLearning(id) },
+                        icdDiagnoses = icdDiagnoses
                     )
+                    "ICD_WORKSPACE" -> {
+                        IcdSymptomWorkspaceScreen(
+                            searchQuery = searchQuery,
+                            onSearchQueryChange = { viewModel.searchIcdWebOrLocal(it) },
+                            icdDiagnoses = icdDiagnoses,
+                            searchResults = icdSearchResults,
+                            searchInProgress = icdSearchInProgress,
+                            searchError = icdSearchError,
+                            onSaveDiagnosis = { id, code, name, dyn, abs, kla, auf, notes, custom ->
+                                viewModel.saveIcdDiagnosis(id, code, name, dyn, abs, kla, auf, notes, custom)
+                            },
+                            onDeleteDiagnosis = { id -> viewModel.deleteIcdDiagnosis(id) },
+                            onImportIcdEntity = { entity -> viewModel.importIcdSearchEntity(entity) }
+                        )
+                    }
                     "ADMIN" -> {
                         if (isAdminUnlocked) {
                             AdminCmsScreen(
@@ -609,9 +632,47 @@ fun PhasenScreen(
 @Composable
 fun DiagnosenScreen(
     selectedDiagnosisId: String,
-    onDiagnosisSelected: (String) -> Unit
+    onDiagnosisSelected: (String) -> Unit,
+    icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
-    val currentDiagnosis = ScientificContent.diagnoses.first { it.id == selectedDiagnosisId }
+    val currentDiagnosis = icdDiagnoses.firstOrNull { it.codeOrId == selectedDiagnosisId } ?: icdDiagnoses.firstOrNull()
+
+    if (currentDiagnosis == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(36.dp))
+                    Text(
+                        text = "Keine Behandlungsleitlinien gefunden",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Bitte navigieren Sie zum 'ICD-Symptome' Tab, um Diagnosen aus dem WHO ICD-11 Register live zu suchen, anzupassen oder neu zu erfassen.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        lineHeight = 16.sp
+                    )
+                }
+            }
+        }
+        return
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -641,12 +702,12 @@ fun DiagnosenScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                ScientificContent.diagnoses.chunked(3).forEach { row ->
+                icdDiagnoses.chunked(3).forEach { row ->
                     Column(modifier = Modifier.weight(1f)) {
                         row.forEach { d ->
-                            val isSelected = d.id == selectedDiagnosisId
+                            val isSelected = d.codeOrId == currentDiagnosis.codeOrId
                             TextButton(
-                                onClick = { onDiagnosisSelected(d.id) },
+                                onClick = { onDiagnosisSelected(d.codeOrId) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 2.dp)
@@ -661,11 +722,11 @@ fun DiagnosenScreen(
                                         shape = RoundedCornerShape(6.dp)
                                     )
                                     .height(38.dp)
-                                    .testTag("diag_tab_${d.id.lowercase()}"),
+                                    .testTag("diag_tab_${d.codeOrId.lowercase()}"),
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = d.id,
+                                    text = d.codeOrId,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
@@ -808,7 +869,8 @@ fun HandbuchScreen(
     selectedDiagnosisId: String,
     onDiagnosisSelected: (String) -> Unit,
     cmsSections: List<CmsSection>,
-    onNavigateToTools: (String, String) -> Unit
+    onNavigateToTools: (String, String) -> Unit,
+    icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
     var selectedChapterId by remember { mutableStateOf<Int?>(null) }
 
@@ -892,7 +954,8 @@ fun HandbuchScreen(
                     )
                     5 -> DiagnosenScreen(
                         selectedDiagnosisId = selectedDiagnosisId,
-                        onDiagnosisSelected = onDiagnosisSelected
+                        onDiagnosisSelected = onDiagnosisSelected,
+                        icdDiagnoses = icdDiagnoses
                     )
                     6 -> Chapter6View(onNavigateToTools = onNavigateToTools)
                     7 -> Chapter7View(onNavigateToTools = onNavigateToTools)
@@ -2651,7 +2714,8 @@ fun ToolsScreen(
     onSaveIncidentReview: (String, String, String, String, String, String, String) -> Unit,
     onDeleteIncidentReview: (Int) -> Unit,
     onSaveTeamLearning: (String, String, String) -> Unit,
-    onDeleteTeamLearning: (Int) -> Unit
+    onDeleteTeamLearning: (Int) -> Unit,
+    icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
     val context = LocalContext.current
     val mainTab = toolsMainTab
@@ -3389,7 +3453,8 @@ fun ToolsScreen(
                     CrisisPlanWorkspaceSection(
                         crisisPlans = crisisPlans,
                         onSaveCrisisPlan = onSaveCrisisPlan,
-                        onDeleteCrisisPlan = onDeleteCrisisPlan
+                        onDeleteCrisisPlan = onDeleteCrisisPlan,
+                        icdDiagnoses = icdDiagnoses
                     )
                 }
             }
@@ -4005,7 +4070,8 @@ fun BreathingGuideComponent(
 fun CrisisPlanWorkspaceSection(
     crisisPlans: List<CrisisPlan>,
     onSaveCrisisPlan: (String, String, String, String, String, String) -> Unit,
-    onDeleteCrisisPlan: (Int) -> Unit
+    onDeleteCrisisPlan: (Int) -> Unit,
+    icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
     var showForm by remember { mutableStateOf(false) }
 
@@ -4078,7 +4144,14 @@ fun CrisisPlanWorkspaceSection(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        listOf("ADHS", "EIPS", "PTBS", "ASS", "Psychose").forEach { item ->
+                        val itemsList = icdDiagnoses.map { it.codeOrId }.take(5).ifEmpty { listOf("ADHS", "EIPS", "PTBS", "ASS", "Psychose") }
+                        
+                        // Fallback default selection in case current selection isn't in dynamic list
+                        if (selectedDiagId !in itemsList && itemsList.isNotEmpty()) {
+                            selectedDiagId = itemsList.first()
+                        }
+
+                        itemsList.forEach { item ->
                             val active = selectedDiagId == item
                             Box(
                                 modifier = Modifier
@@ -5006,6 +5079,637 @@ fun AdminCmsScreen(
                         onDeleteSection(section.id)
                     }
                 )
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════
+// 7. ICD-11 WORKSPACE COMPONENT
+// ══════════════════════════════════════════════════════
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun IcdSymptomWorkspaceScreen(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    icdDiagnoses: List<com.example.data.IcdDiagnosis>,
+    searchResults: List<com.example.data.IcdSearchEntity>,
+    searchInProgress: Boolean,
+    searchError: String?,
+    onSaveDiagnosis: (String, String, String, String, String, String, String, String, Boolean) -> Unit,
+    onDeleteDiagnosis: (String) -> Unit,
+    onImportIcdEntity: (com.example.data.IcdSearchEntity) -> Unit
+) {
+    var queryInput by remember { mutableStateOf(searchQuery) }
+    var selectedDiagIdForEditing by remember { mutableStateOf<String?>(null) }
+    var showCreateCustomDialog by remember { mutableStateOf(false) }
+
+    // Form editing states
+    var editName by remember { mutableStateOf("") }
+    var editCode by remember { mutableStateOf("") }
+    var editDynamik by remember { mutableStateOf("") }
+    var editAbsicherung by remember { mutableStateOf("") }
+    var editKlaerung by remember { mutableStateOf("") }
+    var editAufloesung by remember { mutableStateOf("") }
+    var editNotes by remember { mutableStateOf("") }
+    var editIsCustom by remember { mutableStateOf(false) }
+
+    // New custom diagnosis creation states
+    var createId by remember { mutableStateOf("") }
+    var createCode by remember { mutableStateOf("") }
+    var createName by remember { mutableStateOf("") }
+    var createDynamik by remember { mutableStateOf("") }
+    var createAbsicherung by remember { mutableStateOf("") }
+    var createKlaerung by remember { mutableStateOf("") }
+    var createAufloesung by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Welcome and API Header
+        item {
+            Text(
+                text = "ICD-11 Diagnose- & Symptom-Workspace",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Suchen und deeskalieren Sie Krankheitsbilder direkt über den offiziellen ICD-Katalog der Weltgesundheitsorganisation (WHO).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+            )
+        }
+
+        // API Info Card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Info",
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "WHO Live REST Schnittstelle Aktiv",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Um die Live-Klassifikation abzurufen, tragen Sie Ihren client_id und client_secret im AI Studio Secrets-Panel unter ICD_CLIENT_ID und ICD_CLIENT_SECRET ein. Ist kein Key hinterlegt, greift die App vollautomatisch auf eine qualifizierte lokale psychiatrische Symptom-Datenbank zurück. Alle importierten Einträge lassen sich maßgeschneidert auf Ihre Stationsregeln editieren und in Krisenplänen verlinken.",
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Live Search Input Box
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Symptome oder ICD-Schlüsselwörter suchen",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = queryInput,
+                        onValueChange = { queryInput = it },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("icd_search_input"),
+                        placeholder = { Text("z.B. Depression, Trauma, ADHS, Unruhe, Angst, Delir...") },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (queryInput.isNotEmpty()) {
+                                IconButton(onClick = { 
+                                    queryInput = ""
+                                    onSearchQueryChange("")
+                                }) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Leeren")
+                                }
+                            }
+                        }
+                    )
+                    Button(
+                        onClick = { onSearchQueryChange(queryInput) },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("icd_search_submit")
+                    ) {
+                        Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Suchen", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        // Live Search Results
+        if (searchInProgress) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Frage WHO ICD-11 API Register ab...", fontSize = 12.sp, fontStyle = FontStyle.Italic)
+                }
+            }
+        }
+
+        if (searchError != null) {
+            item {
+                Text(
+                    text = searchError,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
+        }
+
+        if (searchResults.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Gefundene WHO ICD-11 Register-Einträge (${searchResults.size}):",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            items(searchResults) { result ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = result.title,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "ICD Code: ${result.theCode ?: "N/A"} | ID: ${result.id}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    onImportIcdEntity(result)
+                                    android.widget.Toast.makeText(context, "${result.title} erfolgreich importiert!", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.testTag("import_${result.id.lowercase()}")
+                            ) {
+                                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Importieren", fontSize = 10.sp)
+                            }
+                        }
+                        if (result.definition != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = result.definition,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Active treating profiles workspace
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Aktive Behandlungsleitlinien auf Station (${icdDiagnoses.size})",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                TextButton(
+                    onClick = { showCreateCustomDialog = !showCreateCustomDialog },
+                    modifier = Modifier.testTag("btn_show_custom_diag")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Eigene anlegen", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // Custom manual creation drawer card
+        if (showCreateCustomDialog) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("custom_diag_form_card"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Eigene Behandlungsleitlinie erstellen", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                        
+                        OutlinedTextField(
+                            value = createId,
+                            onValueChange = { createId = it },
+                            label = { Text("ID/Kürzel (z.B. DELIR)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = createCode,
+                            onValueChange = { createCode = it },
+                            label = { Text("ICD-Code (Optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = createName,
+                            onValueChange = { createName = it },
+                            label = { Text("Voller klinischer Name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = createDynamik,
+                            onValueChange = { createDynamik = it },
+                            label = { Text("Klinische Eskalations-Dynamik") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = createAbsicherung,
+                            onValueChange = { createAbsicherung = it },
+                            label = { Text("Säule 1: Absicherung (Gelbe/Rote Phase)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = createKlaerung,
+                            onValueChange = { createKlaerung = it },
+                            label = { Text("Säule 2: Klärung (Gelbe/Grüne Phase)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = createAufloesung,
+                            onValueChange = { createAufloesung = it },
+                            label = { Text("Säule 3: Auflösung (Blaue Phase)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.End,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        ) {
+                            TextButton(onClick = { showCreateCustomDialog = false }) {
+                                Text("Abbrechen")
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    if (createId.trim().isNotEmpty() && createName.trim().isNotEmpty()) {
+                                        onSaveDiagnosis(
+                                            createId,
+                                            createCode,
+                                            createName,
+                                            createDynamik,
+                                            createAbsicherung,
+                                            createKlaerung,
+                                            createAufloesung,
+                                            "Selbst angelegte Leitlinie.",
+                                            true
+                                        )
+                                        createId = ""
+                                        createCode = ""
+                                        createName = ""
+                                        createDynamik = ""
+                                        createAbsicherung = ""
+                                        createKlaerung = ""
+                                        createAufloesung = ""
+                                        showCreateCustomDialog = false
+                                        android.widget.Toast.makeText(context, "$createName gespeichert!", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.testTag("save_custom_diag")
+                            ) {
+                                Text("Erstellen & Speichern", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (icdDiagnoses.isEmpty()) {
+            item {
+                Text(
+                    text = "Keine Behandlungsleitlinien im Katalog. Suchen Sie oben nach Symptomen aus dem ICD-11 oder legen Sie eigene an.",
+                    fontSize = 11.sp,
+                    fontStyle = FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            // Edit profile dialog/form card inline below
+            items(icdDiagnoses) { diag ->
+                val isEditingThis = selectedDiagIdForEditing == diag.codeOrId
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isEditingThis) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surface
+                    ),
+                    border = BorderStroke(1.2.dp, if (isEditingThis) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = diag.name,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    if (diag.isCustom) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("EIGENE", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = "System-ID/Kürzel: ${diag.codeOrId} ${if (diag.code.isNotEmpty()) "| ICD-Code: " + diag.code else ""}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Row {
+                                IconButton(
+                                    onClick = {
+                                        if (isEditingThis) {
+                                            selectedDiagIdForEditing = null
+                                        } else {
+                                            selectedDiagIdForEditing = diag.codeOrId
+                                            editName = diag.name
+                                            editCode = diag.code
+                                            editDynamik = diag.dynamik
+                                            editAbsicherung = diag.absicherung
+                                            editKlaerung = diag.klaerung
+                                            editAufloesung = diag.aufloesung
+                                            editNotes = diag.customNotes
+                                            editIsCustom = diag.isCustom
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("edit_trigger_${diag.codeOrId.lowercase()}")
+                                ) {
+                                    Icon(
+                                        imageVector = if (isEditingThis) Icons.Default.Close else Icons.Default.Edit,
+                                        contentDescription = "Editieren",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        onDeleteDiagnosis(diag.codeOrId)
+                                        android.widget.Toast.makeText(context, "${diag.name} gelöscht.", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.testTag("delete_trigger_${diag.codeOrId.lowercase()}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Entfernen",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (isEditingThis) {
+                            // Render Editing Fields
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text("Leitlinie Individualisieren & Anpassen", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+
+                            OutlinedTextField(
+                                value = editName,
+                                onValueChange = { editName = it },
+                                label = { Text("Name der Diagnose / des Symptoms") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("edit_input_name")
+                            )
+
+                            OutlinedTextField(
+                                value = editCode,
+                                onValueChange = { editCode = it },
+                                label = { Text("ICD-11 Klassifikationscode (z.B. 6A05)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("edit_input_code")
+                            )
+
+                            OutlinedTextField(
+                                value = editDynamik,
+                                onValueChange = { editDynamik = it },
+                                label = { Text("Typische Eskalations-Dynamiken") },
+                                maxLines = 5,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("edit_input_dynamik")
+                            )
+
+                            OutlinedTextField(
+                                value = editAbsicherung,
+                                onValueChange = { editAbsicherung = it },
+                                label = { Text("1. Säule - Absicherung (Reizminderung & Schutz)") },
+                                maxLines = 5,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("edit_input_absicherung")
+                            )
+
+                            OutlinedTextField(
+                                value = editKlaerung,
+                                onValueChange = { editKlaerung = it },
+                                label = { Text("2. Säule - Deeskalative Interaktion & Klärung") },
+                                maxLines = 5,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("edit_input_klaerung")
+                            )
+
+                            OutlinedTextField(
+                                value = editAufloesung,
+                                onValueChange = { editAufloesung = it },
+                                label = { Text("3. Säule - Wiederaufbau & Auflösung") },
+                                maxLines = 5,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("edit_input_aufloesung")
+                            )
+
+                            OutlinedTextField(
+                                value = editNotes,
+                                onValueChange = { editNotes = it },
+                                label = { Text("Individuelle Stationsnotizen / Patientenbesonderheiten") },
+                                placeholder = { Text("z.B. 'Achtung: Luca reagiert auf laute Stimmen paradox mit Aggression. Unbedingt flüstern.'") },
+                                maxLines = 5,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("edit_input_notes")
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(onClick = { selectedDiagIdForEditing = null }) {
+                                    Text("Abbrechen")
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        onSaveDiagnosis(
+                                            diag.codeOrId,
+                                            editCode,
+                                            editName,
+                                            editDynamik,
+                                            editAbsicherung,
+                                            editKlaerung,
+                                            editAufloesung,
+                                            editNotes,
+                                            editIsCustom
+                                        )
+                                        selectedDiagIdForEditing = null
+                                        android.widget.Toast.makeText(context, "Änderungen an ${editName} gespeichert!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.testTag("save_edit_submit")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Speichern", fontSize = 11.sp)
+                                }
+                            }
+
+                        } else {
+                            // Normal details view
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Klinische Dynamik & Symptome:",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Text(
+                                text = diag.dynamik,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                ActionPillarCard(
+                                    title = "SÄULE 1: ABSICHERUNG (CHRONISCH / JETZT)",
+                                    content = diag.absicherung,
+                                    bg = Color(0xFFFFFBEB),
+                                    tc = Color(0xFFB45309),
+                                    border = Color(0xFFFCD34D),
+                                    icon = Icons.Default.Warning
+                                )
+                                ActionPillarCard(
+                                    title = "SÄULE 2: KLÄRUNG (INTERAKTIV / DIAGNOSTISCH)",
+                                    content = diag.klaerung,
+                                    bg = Color(0xFFEFF6FF),
+                                    tc = Color(0xFF1E40AF),
+                                    border = Color(0xFF93C5FD),
+                                    icon = Icons.Default.Info
+                                )
+                                ActionPillarCard(
+                                    title = "SÄULE 3: AUFLÖSUNG (NACHBEREITUNG & EMPOWERMENT)",
+                                    content = diag.aufloesung,
+                                    bg = Color(0xFFF0FDF4),
+                                    tc = Color(0xFF15803D),
+                                    border = Color(0xFF86EFAC),
+                                    icon = Icons.Default.Check
+                                )
+                            }
+
+                            if (diag.customNotes.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFFFFFAF0), RoundedCornerShape(6.dp))
+                                        .border(BorderStroke(1.dp, Color(0xFFFEE2E2).copy(alpha = 0.5f)), RoundedCornerShape(6.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "✍️ INDIVIDUELLE STATIONSNOTIZEN / TRADITIONS-LOGS:",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF9A3412)
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = diag.customNotes,
+                                            fontSize = 11.sp,
+                                            lineHeight = 15.sp,
+                                            color = Color(0xFF7C2D12)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

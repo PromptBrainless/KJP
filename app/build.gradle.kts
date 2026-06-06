@@ -63,6 +63,8 @@ android {
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
+  ignoreList.add("8afa90ceb4ba4de2b3abf37a18133730_a927f2ab78bd401c8ed588f96ab60141")
+  ignoreList.add("[0-9].*")
 }
 
 // Some unused dependencies are commented out below instead of being removed.

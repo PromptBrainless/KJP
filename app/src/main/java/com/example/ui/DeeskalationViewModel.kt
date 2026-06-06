@@ -8,6 +8,9 @@ import com.example.data.DeeskalationRepository
 import com.example.data.IncidentReview
 import com.example.data.CmsSection
 import com.example.data.TeamLearning
+import com.example.data.IcdDiagnosis
+import com.example.data.IcdSearchEntity
+import com.example.data.IcdApiRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,7 +18,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import android.util.Log
 
 enum class BreathingPhase {
     IDLE, INHALE, EXHALE
@@ -52,11 +57,117 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
             initialValue = emptyList()
         )
 
+    // ICD Live API & Customized Database States
+    private val icdApiRepository = IcdApiRepository()
+
+    val allIcdDiagnoses: StateFlow<List<IcdDiagnosis>> = repository.allIcdDiagnoses
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    private val _icdSearchResults = MutableStateFlow<List<IcdSearchEntity>>(emptyList())
+    val icdSearchResults: StateFlow<List<IcdSearchEntity>> = _icdSearchResults.asStateFlow()
+
+    private val _icdSearchInProgress = MutableStateFlow(false)
+    val icdSearchInProgress: StateFlow<Boolean> = _icdSearchInProgress.asStateFlow()
+
+    private val _icdSearchError = MutableStateFlow<String?>(null)
+    val icdSearchError: StateFlow<String?> = _icdSearchError.asStateFlow()
+
+    init {
+        seedIcdDiagnosesIfEmpty()
+    }
+
+    private fun seedIcdDiagnosesIfEmpty() {
+        viewModelScope.launch {
+            try {
+                // Read the first emission of allIcdDiagnoses securely to avoid infinite loop
+                val existing = repository.allIcdDiagnoses.first()
+                if (existing.isEmpty()) {
+                    Log.d("DeeskalationViewModel", "Local ICD database is empty. Preheating with psychiatric deescalation templates.")
+                    
+                    // 1. Seed from hardcoded pediatric psychiatry diagnoses first
+                    com.example.data.ScientificContent.diagnoses.forEach { d ->
+                        val code = when (d.id) {
+                            "ADHS" -> "6A05"
+                            "EIPS" -> "6D11.0"
+                            "PTBS" -> "6B40"
+                            "ASS" -> "6A02"
+                            "Psychose" -> "6A20"
+                            "Sozialverhalten" -> "6A06"
+                            else -> ""
+                        }
+                        repository.insertIcdDiagnosis(
+                            IcdDiagnosis(
+                                codeOrId = d.id,
+                                code = code,
+                                name = d.name,
+                                dynamik = d.dynamik,
+                                absicherung = d.absicherung,
+                                klaerung = d.klaerung,
+                                aufloesung = d.aufloesung,
+                                customNotes = "Standard-Krankheitsbild im Handbuch.",
+                                isCustom = false
+                            )
+                        )
+                    }
+
+                    // 2. Add extra highly common ICD clinical syndromes
+                    repository.insertIcdDiagnosis(
+                        IcdDiagnosis(
+                            codeOrId = "6A70.1",
+                            code = "6A70.1",
+                            name = "Mittelgradige depressive Episode",
+                            dynamik = "Eskalationen entspringen oft tiefer Verzweiflung, Resignation oder Reizüberflutung. Aggressive Symptome treten meist als dysfunktionaler Schutz vor Hilflosigkeit oder Überforderung auf.",
+                            absicherung = "Absolute Reizarmut etablieren · Jeglichen Druck herausnehmen · Keine lauten Töne oder schnellen/hektischen Bewegungen.",
+                            klaerung = "Innere Not validieren: 'Ich merke, wie unerträglich das gerade ist. Ich bin hier und bleibe ruhig.' · Keine falschen Ratschläge.",
+                            aufloesung = "Sehr einfache, niedrigschwellige Aktivierungs-Wahlmöglichkeiten anbieten. Schritte extrem klein halten.",
+                            customNotes = "Häufiges psychiatrisches Krankheitsbild mit vegetativer Erschöpfung.",
+                            isCustom = false
+                        )
+                    )
+
+                    repository.insertIcdDiagnosis(
+                        IcdDiagnosis(
+                            codeOrId = "6B01.1",
+                            code = "6B01.1",
+                            name = "Panikstörung / Akute Agitierte Angst",
+                            dynamik = "Akute Todesangst triggert den Sympathikus maximal (Flucht- oder Kampfsyndrom). Das Kind/Adoleszente reagiert hyperaktiv, schreckhaft oder hochaggressiv bei Einengung.",
+                            absicherung = "Niemals den physischen Fluchtweg blockieren oder den Raum verengen · Körperkontakt absolut vermeiden · Beruhigend sprechen.",
+                            klaerung = "Therapeutisches Atem-Matching (Paced Breathing 4-8s) des Teams sichtbar einsetzen. Reize minimieren.",
+                            aufloesung = "Sicherheit bestätigen: 'Du bist in Sicherheit, dein Herz schlägt nur schnell.' · Kühles Wasser anbieten.",
+                            customNotes = "Strikter Einsatz von Co-Regulation über Atmung indiziert.",
+                            isCustom = false
+                        )
+                    )
+
+                    repository.insertIcdDiagnosis(
+                        IcdDiagnosis(
+                            codeOrId = "6C50",
+                            code = "6C50",
+                            name = "Suchtmedizin / Akute Intoxikation",
+                            dynamik = "Einschränkungen der Impulskontrolle und Urteilsfähigkeit durch Substanzwirkung (z.B. Alkohol, Cannabis, Amphetamine). Hohe paradoxe Aggressionsneigung.",
+                            absicherung = "Sicherheitsabstand vergrößern · Keine logischen Diskussionen führen · Klare, kurze Warnungen bei Eigengefährdung.",
+                            klaerung = "Grenzen unemotional und unmissverständlich setzen · Ablenkung auf primäre vitale Bedürfnisse (Schlaf, Essen, Trinken) lenken.",
+                            aufloesung = "Substanzabbau in geschützter, reizarmer Umgebung abwarten. Vitalparameter (Pupillen, Atmung) im Blick behalten.",
+                            customNotes = "Alkohol- und Amphetamin-induzierte Psychofreie Entgleisungen erfordern Distanz.",
+                            isCustom = false
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("DeeskalationViewModel", "Failed during ICD preheating/seeding: ${e.message}", e)
+            }
+        }
+    }
+
     // Interactive UI search & filter states
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    private val _selectedCategoryTab = MutableStateFlow("HANDBUCH") // HANDBUCH, TOOLS, ADMIN
+    private val _selectedCategoryTab = MutableStateFlow("HANDBUCH") // HANDBUCH, TOOLS, ADMIN, ICD_WORKSPACE
     val selectedCategoryTab: StateFlow<String> = _selectedCategoryTab.asStateFlow()
 
     private val _toolsMainTab = MutableStateFlow("COREG_SKILLS")
@@ -82,6 +193,90 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
     val breathingCycleCount: StateFlow<Int> = _breathingCycleCount.asStateFlow()
 
     private var breathingJob: Job? = null
+
+    fun searchIcdWebOrLocal(query: String) {
+        _searchQuery.value = query
+        if (query.trim().isEmpty()) {
+            _icdSearchResults.value = emptyList()
+            return
+        }
+
+        _icdSearchInProgress.value = true
+        _icdSearchError.value = null
+        viewModelScope.launch {
+            try {
+                // Safely read WHO client keys from Secrets-injected BuildConfig
+                val clientId = com.example.BuildConfig.ICD_CLIENT_ID
+                val clientSecret = com.example.BuildConfig.ICD_CLIENT_SECRET
+                
+                val results = icdApiRepository.searchWebIcd(clientId, clientSecret, query)
+                _icdSearchResults.value = results
+                if (results.isEmpty()) {
+                    Log.d("DeeskalationViewModel", "No live Results returned. Local database search remains active.")
+                }
+            } catch (e: Exception) {
+                Log.e("DeeskalationViewModel", "WHO live API search failed: ${e.message}")
+                _icdSearchError.value = "Konnte ICD-Katalog nicht laden: ${e.localizedMessage}"
+            } finally {
+                _icdSearchInProgress.value = false
+            }
+        }
+    }
+
+    fun saveIcdDiagnosis(
+        codeOrId: String,
+        code: String,
+        name: String,
+        dynamik: String,
+        absicherung: String,
+        klaerung: String,
+        aufloesung: String,
+        customNotes: String,
+        isCustom: Boolean = false
+    ) {
+        viewModelScope.launch {
+            repository.insertIcdDiagnosis(
+                IcdDiagnosis(
+                    codeOrId = codeOrId,
+                    code = code,
+                    name = name,
+                    dynamik = dynamik,
+                    absicherung = absicherung,
+                    klaerung = klaerung,
+                    aufloesung = aufloesung,
+                    customNotes = customNotes,
+                    isCustom = isCustom
+                )
+            )
+        }
+    }
+
+    fun deleteIcdDiagnosis(codeOrId: String) {
+        viewModelScope.launch {
+            repository.deleteIcdDiagnosisById(codeOrId)
+        }
+    }
+
+    fun importIcdSearchEntity(entity: IcdSearchEntity) {
+        viewModelScope.launch {
+            val existing = repository.getIcdDiagnosisById(entity.id)
+            if (existing == null) {
+                repository.insertIcdDiagnosis(
+                    IcdDiagnosis(
+                        codeOrId = entity.id,
+                        code = entity.theCode ?: "",
+                        name = entity.title,
+                        dynamik = entity.definition ?: "Inportiertes Krankheitsbild aus dem ICD-11 WHO Register. Perfekt für deeskalatives Arbeiten.",
+                        absicherung = "Säule 1 (Absicherung): Druck reduzieren, Reizarme Umgebung herstellen, Ruhe vermitteln.",
+                        klaerung = "Säule 2 (Klärung): Symptome anerkennen, Bedürfnisse erfragen, Gefühlsdynamik deeskalieren.",
+                        aufloesung = "Säule 3 (Auflösung): Kleine Erfolge stabilisieren, klare Wahlmöglichkeiten vorlegen.",
+                        customNotes = "Live importiert aus ICD-11 WHO API.",
+                        isCustom = true
+                    )
+                )
+            }
+        }
+    }
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query

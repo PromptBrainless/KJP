@@ -7,6 +7,19 @@ class DeeskalationRepository(private val dao: DeeskalationDao) {
     val allIncidentReviews: Flow<List<IncidentReview>> = dao.getAllIncidentReviews()
     val allCmsSections: Flow<List<CmsSection>> = dao.getAllCmsSections()
     val allTeamLearnings: Flow<List<TeamLearning>> = dao.getAllTeamLearnings()
+    val allIcdDiagnoses: Flow<List<IcdDiagnosis>> = dao.getAllIcdDiagnoses()
+
+    suspend fun getIcdDiagnosisById(codeOrId: String): IcdDiagnosis? {
+        return dao.getIcdDiagnosisById(codeOrId)
+    }
+
+    suspend fun insertIcdDiagnosis(diagnosis: IcdDiagnosis) {
+        dao.insertIcdDiagnosis(diagnosis)
+    }
+
+    suspend fun deleteIcdDiagnosisById(codeOrId: String) {
+        dao.deleteIcdDiagnosisById(codeOrId)
+    }
 
     suspend fun insertCrisisPlan(plan: CrisisPlan) {
         dao.insertCrisisPlan(plan)
