@@ -52,4 +52,20 @@ class DeeskalationRepository(private val dao: DeeskalationDao) {
     suspend fun deleteTeamLearningById(id: Int) {
         dao.deleteTeamLearningById(id)
     }
+
+    val allHandoverReports: Flow<List<HandoverReport>> = dao.getAllHandoverReports()
+    val allStrategyRatings: Flow<List<StrategyRating>> = dao.getAllStrategyRatings()
+
+    suspend fun insertHandoverReport(report: HandoverReport) {
+        dao.insertHandoverReport(report)
+    }
+
+    suspend fun deleteHandoverReportById(id: Int) {
+        dao.deleteHandoverReportById(id)
+    }
+
+    suspend fun insertStrategyRating(rating: StrategyRating) {
+        dao.insertStrategyRating(rating)
+    }
 }
+

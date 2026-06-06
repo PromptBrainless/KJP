@@ -38,7 +38,7 @@ private val LightColorScheme = lightColorScheme(
 
 @Composable
 fun MyApplicationTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true, // Default to soothing night mode (station = often intensive or poor lighting!)
     dynamicColor: Boolean = false, // Disable dynamic colors to keep clinical branding consistent
     content: @Composable () -> Unit,
 ) {

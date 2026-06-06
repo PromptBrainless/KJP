@@ -11,6 +11,10 @@ import com.example.data.TeamLearning
 import com.example.data.IcdDiagnosis
 import com.example.data.IcdSearchEntity
 import com.example.data.IcdApiRepository
+import com.example.data.GeminiApiRepository
+import com.example.data.HandoverReport
+import com.example.data.StrategyRating
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,6 +55,36 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
         )
 
     val allTeamLearnings: StateFlow<List<TeamLearning>> = repository.allTeamLearnings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val allHandoverReports: StateFlow<List<HandoverReport>> = repository.allHandoverReports
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val allStrategyRatings: StateFlow<List<StrategyRating>> = repository.allStrategyRatings
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val topStrategiesLast7Days: StateFlow<List<Pair<String, Int>>> = repository.allStrategyRatings
+        .map { ratings ->
+            val sevenDaysAgo = System.currentTimeMillis() - (7L * 24 * 60 * 60 * 1000L)
+            ratings.filter { it.timestamp >= sevenDaysAgo && it.isHelpful }
+                .groupBy { it.strategyName }
+                .mapValues { it.value.size }
+                .toList()
+                .sortedByDescending { it.second }
+                .take(3)
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -169,6 +203,14 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
 
     private val _selectedCategoryTab = MutableStateFlow("HANDBUCH") // HANDBUCH, TOOLS, ADMIN, ICD_WORKSPACE
     val selectedCategoryTab: StateFlow<String> = _selectedCategoryTab.asStateFlow()
+
+    // Gemini API Companionship states
+    private val geminiRepository = GeminiApiRepository()
+    private val _aiResponse = MutableStateFlow<String?>(null)
+    val aiResponse: StateFlow<String?> = _aiResponse.asStateFlow()
+
+    private val _aiLoading = MutableStateFlow(false)
+    val aiLoading: StateFlow<Boolean> = _aiLoading.asStateFlow()
 
     private val _toolsMainTab = MutableStateFlow("COREG_SKILLS")
     val toolsMainTab: StateFlow<String> = _toolsMainTab.asStateFlow()
@@ -467,6 +509,68 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
         viewModelScope.launch {
             repository.deleteTeamLearningById(id)
         }
+    }
+
+    // Interactive conversational companion method
+    fun consultCompanion(situation: String, diagnosisId: String, phaseId: String) {
+        _aiLoading.value = true
+        _aiResponse.value = null
+        viewModelScope.launch {
+            try {
+                val apiKey = com.example.BuildConfig.GEMINI_API_KEY
+                val response = geminiRepository.consultCompanion(apiKey, situation, diagnosisId, phaseId)
+                _aiResponse.value = response
+            } catch (e: Exception) {
+                _aiResponse.value = "Klinischer Fehler bei der API-Konsultation: ${e.localizedMessage}"
+            } finally {
+                _aiLoading.value = false
+            }
+        }
+    }
+
+    fun saveHandoverReport(
+        phase: String,
+        diagnosis: String,
+        strategies: String,
+        result: String,
+        outcome: String,
+        roomNumber: String = ""
+    ) {
+        viewModelScope.launch {
+            repository.insertHandoverReport(
+                HandoverReport(
+                    phase = phase,
+                    diagnosis = diagnosis,
+                    strategies = strategies,
+                    result = result.take(200),
+                    outcome = outcome,
+                    roomNumber = roomNumber
+                )
+            )
+        }
+    }
+
+    fun deleteHandoverReport(id: Int) {
+        viewModelScope.launch {
+            repository.deleteHandoverReportById(id)
+        }
+    }
+
+    fun submitStrategyRating(strategyName: String, isHelpful: Boolean, stationId: String = "Allgemein") {
+        viewModelScope.launch {
+            repository.insertStrategyRating(
+                StrategyRating(
+                    strategyName = strategyName,
+                    isHelpful = isHelpful,
+                    stationId = stationId
+                )
+            )
+        }
+    }
+
+    fun clearAiConsultation() {
+        _aiResponse.value = null
+        _aiLoading.value = false
     }
 
     override fun onCleared() {

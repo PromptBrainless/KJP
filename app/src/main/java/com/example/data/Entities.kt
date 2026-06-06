@@ -63,3 +63,25 @@ data class IcdDiagnosis(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+@Entity(tableName = "handover_reports")
+data class HandoverReport(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val timestamp: Long = System.currentTimeMillis(),
+    val phase: String,
+    val diagnosis: String,
+    val strategies: String,
+    val result: String, // Max. 200 Zeichen
+    val outcome: String, // Ja / Nein / OA informiert
+    val roomNumber: String = "" // Optional, no names or birthdates to comply with DSGVO
+)
+
+@Entity(tableName = "strategy_ratings")
+data class StrategyRating(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val strategyName: String,
+    val isHelpful: Boolean,
+    val stationId: String = "Allgemein",
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+

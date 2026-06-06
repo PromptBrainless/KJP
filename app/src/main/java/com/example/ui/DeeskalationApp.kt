@@ -46,6 +46,9 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -74,6 +77,10 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
     var adminPinInput by remember { mutableStateOf("") }
     var isAdminUnlocked by remember { mutableStateOf(false) }
     var adminDialogErrorMessage by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+    val sharedPref = remember { context.getSharedPreferences("kjp_deeskalieren_prefs", Context.MODE_PRIVATE) }
+    var onboardingAccepted by remember { mutableStateOf(sharedPref.getBoolean("onboarding_accepted", false)) }
 
     if (showAdminUnlockDialog) {
         AlertDialog(
@@ -150,8 +157,16 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
         )
     }
 
-    Scaffold(
-        topBar = {
+    if (!onboardingAccepted) {
+        OnboardingConsentDialog(
+            onAccept = {
+                sharedPref.edit().putBoolean("onboarding_accepted", true).apply()
+                onboardingAccepted = true
+            }
+        )
+    } else {
+        Scaffold(
+            topBar = {
             TopAppBar(
                 title = {
                     Column(
@@ -218,6 +233,7 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
             ) {
                 val menuTabs = mutableListOf(
                     Triple("HANDBUCH", "Handbuch", Icons.Default.Info),
+                    Triple("KI_PARTNER", "KI-Begleiter", Icons.Default.Face),
                     Triple("ICD_WORKSPACE", "ICD-Symptome", Icons.Default.Search)
                 )
                 if (isAdminUnlocked) {
@@ -288,6 +304,9 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
                         },
                         onDeleteTeamLearning = { id -> viewModel.deleteTeamLearning(id) }
                     )
+                    "KI_PARTNER" -> {
+                        KiPartnerWorkspaceScreen(viewModel)
+                    }
                     "ICD_WORKSPACE" -> {
                         IcdSymptomWorkspaceScreen(
                             searchQuery = searchQuery,
@@ -325,6 +344,7 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
             }
         }
     }
+}
 }
 
 // ══════════════════════════════════════════════════════
@@ -7238,3 +7258,1173 @@ fun IcdSymptomWorkspaceScreen(
         }
     }
 }
+
+// ══════════════════════════════════════════════════════
+// KI PARTNER WORKSPACE AND ONBOARDING COMPLIANCE
+// ══════════════════════════════════════════════════════
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun KiPartnerWorkspaceScreen(viewModel: DeeskalationViewModel) {
+    val context = LocalContext.current
+    val aiResponse by viewModel.aiResponse.collectAsStateWithLifecycle()
+    val aiLoading by viewModel.aiLoading.collectAsStateWithLifecycle()
+
+    val topStrategies by viewModel.topStrategiesLast7Days.collectAsStateWithLifecycle()
+    val handoverReports by viewModel.allHandoverReports.collectAsStateWithLifecycle()
+    val icdDiagnosesDb by viewModel.allIcdDiagnoses.collectAsStateWithLifecycle()
+
+    var situationInput by remember { mutableStateOf("") }
+    var selectedDiagnosis by remember { mutableStateOf("Allgemein") }
+    var selectedPhase by remember { mutableStateOf("GELB") } // WEISS_GRUEN, GELB, ROT, BLAU
+
+    // Feedback status tracking
+    var feedbackSubmitted by remember { mutableStateOf(false) }
+
+    // Handover form state tracking
+    var showHandoverForm by remember { mutableStateOf(false) }
+    var handoverResultText by remember { mutableStateOf("") }
+    var handoverOutcomeStatus by remember { mutableStateOf("Nein") } // Nein, Ja, OA informiert
+    var handoverRoomNum by remember { mutableStateOf("") }
+    var savedReportIdForExports by remember { mutableStateOf<Int?>(null) }
+
+    // Option to override/force re-run onboarding
+    var showForceOnboardingIntro by remember { mutableStateOf(false) }
+
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    if (showForceOnboardingIntro) {
+        OnboardingConsentDialog(onAccept = {
+            showForceOnboardingIntro = false
+        })
+    } else {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Header with quick relaunch tour option
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.25f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Face,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "KI-ECHTZEIT-BEGLEITER (GEMINI)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
+                                    Text(
+                                        text = "Klinisch fundierte und anonymisierte Co-Regulation",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { showForceOnboardingIntro = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "Einführungstour",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 1. Success Dashboard Section - TOP-3 (Priority 3)
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                tint = Color(0xFFFBBF24),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "SUCCESS-DASHBOARD (LETZTE 7 TAGE)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        if (topStrategies.isEmpty()) {
+                            Text(
+                                text = "Bisher sind noch keine deeskalierenden Strategien bewertet worden. Klicken Sie nach einer Empfehlung unten auf 👍 oder 👎, um das dynamische Systemlernen zu unterstützen.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                topStrategies.forEachIndexed { idx, (stratLabel, count) ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${idx + 1}. $stratLabel",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .background(
+                                                    MaterialTheme.colorScheme.primaryContainer,
+                                                    RoundedCornerShape(6.dp)
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "$count x geholfen",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 9.sp,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Phasen-Ampel (Traffic Light Phase Selector)
+            item {
+                Column {
+                    Text(
+                        text = "DEESKALIERUNGS-PHASEN-AMPEL",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val phaseNodes = listOf(
+                            Quadruple("WEISS_GRUEN", "WEISS", "Prävention", Color(0xFFE2E8F0) to Color(0xFF475569)),
+                            Quadruple("GELB", "GELB", "Prä-Krise", Color(0xFFFEF3C7) to Color(0xFFD97706)),
+                            Quadruple("ROT", "ROT", "Krise (Max)", Color(0xFFFEE2E2) to Color(0xFFDC2626)),
+                            Quadruple("BLAU", "BLAU", "Nachsorge", Color(0xFFDBEAFE) to Color(0xFF2563EB))
+                        )
+
+                        phaseNodes.forEach { (nodeId, label, sub, colors) ->
+                            val isSelected = selectedPhase == nodeId
+                            val borderMod = if (isSelected) {
+                                Modifier.border(2.dp, colors.second, RoundedCornerShape(8.dp))
+                            } else {
+                                Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                            }
+
+                            Card(
+                                onClick = { selectedPhase = nodeId },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(56.dp)
+                                    .then(borderMod),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) colors.first else MaterialTheme.colorScheme.surface
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxSize().padding(4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) colors.second else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = sub,
+                                        fontSize = 8.sp,
+                                        color = if (isSelected) colors.second.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Schnellzugriff-Szenarien (Quick Access Clinical Triggers)
+            item {
+                Column {
+                    Text(
+                        text = "SCHNELLZUGRIFF (AKUTE SZEANRIEN)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val quickButtons = listOf(
+                            Triple("Drohung", "Messer/Drohang", "Im Flur droht ein 16-jähriger Patient vocal und physisch, indem er Gegenstände wirft und sich groß aufbaut."),
+                            Triple("Regression", "Regression", "Eine 14-jährige Patientin zeigt im Flur einen dissoziativen Flashback samt regressiven Weinkrämpfen und weigert sich aufzustehen."),
+                            Triple("Verweigerung", "Trotz/Verweigerung", "Patient im Zimmer barricadiert sich und verweigert die reguläre Medikamentengabe und kündigt Eskalation an."),
+                            Triple("Weglauf", "Weglauftendenz", "Jugendlicher steht fluchtbereit am Stationsschott und kündigt an, beim nächsten Öffnen sofort im Sprint zu entweichen.")
+                        )
+
+                        quickButtons.forEach { (lblBrief, title, textDesc) ->
+                            Button(
+                                onClick = {
+                                    situationInput = textDesc
+                                    feedbackSubmitted = false
+                                    showHandoverForm = false
+                                    savedReportIdForExports = null
+                                    when (lblBrief) {
+                                        "Drohung" -> {
+                                            selectedPhase = "ROT"
+                                            selectedDiagnosis = "ADHS"
+                                        }
+                                        "Regression" -> {
+                                            selectedPhase = "GELB"
+                                            selectedDiagnosis = "PTBS"
+                                        }
+                                        "Verweigerung" -> {
+                                            selectedPhase = "GELB"
+                                            selectedDiagnosis = "EIPS"
+                                        }
+                                        "Weglauf" -> {
+                                            selectedPhase = "ROT"
+                                            selectedDiagnosis = "Autismus"
+                                        }
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text(text = title, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. Diagnostischer Kontext (Chip + ICD-11 List Selector Integration)
+            item {
+                Column {
+                    Text(
+                        text = "DIAGNOSTISCHER KONTEXT",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val staticDiagnoses = listOf("Allgemein", "ADHS", "PTBS", "EIPS", "Autismus", "Psychose", "Suizidalität", "Substanzintoxikation")
+                    
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        staticDiagnoses.forEach { diag ->
+                            val isSelected = selectedDiagnosis == diag
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { 
+                                    selectedDiagnosis = diag 
+                                    feedbackSubmitted = false
+                                    showHandoverForm = false
+                                    savedReportIdForExports = null
+                                },
+                                label = { Text(diag, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                            )
+                        }
+                    }
+
+                    // ICD-11 selection fallback list from Local DB (loaded from seed/custom)
+                    if (icdDiagnosesDb.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Oder aus dem ICD-Katalog wählen (Koppelt ICD-Klartextcode in den Bericht):",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+
+                        var isIcdDropdownExpanded by remember { mutableStateOf(false) }
+                        
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { isIcdDropdownExpanded = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (selectedDiagnosis !in staticDiagnoses) "Wahl: $selectedDiagnosis" else "ICD-11 Diagnosekatalog öffnen...",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            }
+                            
+                            DropdownMenu(
+                                expanded = isIcdDropdownExpanded,
+                                onDismissRequest = { isIcdDropdownExpanded = false },
+                                modifier = Modifier.fillMaxWidth(0.9f)
+                            ) {
+                                icdDiagnosesDb.forEach { icd ->
+                                    DropdownMenuItem(
+                                        text = { Text("[${icd.code}] ${icd.name}", fontSize = 11.sp, maxLines = 1) },
+                                        onClick = {
+                                            selectedDiagnosis = "[${icd.code}] ${icd.name}"
+                                            isIcdDropdownExpanded = false
+                                            feedbackSubmitted = false
+                                            showHandoverForm = false
+                                            savedReportIdForExports = null
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. Input Field
+            item {
+                Column {
+                    Text(
+                        text = "SITUATION (NUR ANONYMISIERTE BESCHREIBUNG)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = situationInput,
+                        onValueChange = { 
+                            situationInput = it 
+                            feedbackSubmitted = false
+                            showHandoverForm = false
+                            savedReportIdForExports = null
+                        },
+                        placeholder = { Text("Beschreiben Sie das Verhalten, Drohungen oder Trigger... (z. B. 'Jugendlicher wirft Becher an die Wand, blockiert Ausgang...')", fontSize = 12.sp) },
+                        modifier = Modifier.fillMaxWidth().height(100.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+            }
+
+            // 6. Consult Button
+            item {
+                Button(
+                    onClick = {
+                        if (situationInput.trim().isNotEmpty()) {
+                            viewModel.consultCompanion(
+                                situation = situationInput,
+                                diagnosisId = selectedDiagnosis,
+                                phaseId = selectedPhase
+                            )
+                        } else {
+                            android.widget.Toast.makeText(context, "Bitte beschreiben Sie zuerst die Situation!", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = !aiLoading,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    if (aiLoading) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Befragungsmodelle laufen...", fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.padding(end = 4.dp))
+                        Text("Deeskalationstipps anfordern", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // 7. Result displaying card with integrated rating dialog
+            if (aiLoading) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Expertenmodelle werden strukturiert...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Kombiniere Co-Regulation, Safewards, Polyvagal & DBT",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontStyle = FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            } else if (aiResponse != null) {
+                item {
+                    val isEmergencyResponse = aiResponse!!.contains("NOTFALL") || aiResponse!!.contains("ESKALATION") || aiResponse!!.contains("DIENSTARZT")
+                    val borderColor = if (isEmergencyResponse) Color.Red else MaterialTheme.colorScheme.tertiary
+                    
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.5.dp, borderColor, RoundedCornerShape(12.dp)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "DEESKALATIVES HANDLUNGSBLATT",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isEmergencyResponse) Color.Red else MaterialTheme.colorScheme.tertiary
+                                )
+                                IconButton(
+                                    onClick = {
+                                        clipboardManager.setText(AnnotatedString(aiResponse!!))
+                                        android.widget.Toast.makeText(context, "Handlungsblatt kopiert!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = "Schnittstelle Kopieren", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                            
+                            Spacer(modifier = Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outlineVariant))
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text(
+                                text = aiResponse!!,
+                                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Spacer(modifier = Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outlineVariant))
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // PRIORITY 3: FEEDBACK LOOP
+                            if (!feedbackSubmitted) {
+                                Text(
+                                    text = "Hat diese deeskalierende Strategie in der Praxis geholfen?", 
+                                    style = MaterialTheme.typography.labelSmall, 
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.submitStrategyRating(
+                                                strategyName = "Phase [$selectedPhase] (${selectedDiagnosis})",
+                                                isHelpful = true
+                                            )
+                                            feedbackSubmitted = true
+                                            android.widget.Toast.makeText(context, "Vielen Dank! Erfolg lokal vermerkt.", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, Color(0xFF10B981))
+                                    ) {
+                                        Icon(Icons.Default.Check, null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Geholfen", color = Color(0xFF10B981), fontSize = 11.sp)
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            viewModel.submitStrategyRating(
+                                                strategyName = "Phase [$selectedPhase] (${selectedDiagnosis})",
+                                                isHelpful = false
+                                            )
+                                            feedbackSubmitted = true
+                                            android.widget.Toast.makeText(context, "Feedback gespeichert (Nicht hilfreich).", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(1.dp, Color(0xFFEF4444))
+                                    ) {
+                                        Icon(Icons.Default.Delete, null, tint = Color(0xFFEF4444), modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("K. Erfolg", color = Color(0xFFEF4444), fontSize = 11.sp)
+                                    }
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                        .padding(10.dp)
+                                ) {
+                                    Text(
+                                        text = "❤️ Danke für Ihr anonymisiertes Fachfeedback! Dieses fließt direkt in die Optimierung Ihres Stations-Dashboards ein.", 
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontStyle = FontStyle.Italic,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            
+                            // Trigger button to open the Handover report generator
+                            Button(
+                                onClick = { showHandoverForm = !showHandoverForm },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary,
+                                    contentColor = MaterialTheme.colorScheme.onSecondary
+                                )
+                            ) {
+                                Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Schichtübergabe-Bericht erstellen", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 8. PRIORITY 2: HANDOVER REPORT GENERATION FORM
+            if (showHandoverForm && aiResponse != null) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.5.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f), RoundedCornerShape(12.dp)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "📝 NEUEN ÜBERGABEBERICHT ERFASSEN",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Eintrag zur lückenlosen Schichtübergabe. DSGVO-konform verschlüsselt.",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Room number (DSGVO compatible, optional)
+                            Text(
+                                text = "Zimmer-/Ortnummer (Freiwillig, z. B. 'Zimmer 104' oder 'Flur'):",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            OutlinedTextField(
+                                value = handoverRoomNum,
+                                onValueChange = { handoverRoomNum = it },
+                                placeholder = { Text("Keine Angabe", fontSize = 12.sp) },
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Outcome Status Buttons: "Machte es eine Eskalation?"
+                            Text(
+                                text = "Eskalationswarnung? (Wählen)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val outcomes = listOf(
+                                    "Nein" to (Color(0xFF10B981) to "Deeskaliert"),
+                                    "Ja" to (Color(0xFFEF4444) to "Eskaliert"),
+                                    "OA informiert" to (Color(0xFFF59E0B) to "Oberarzt")
+                                )
+
+                                outcomes.forEach { (statusKey, layout) ->
+                                    val isStatusSelected = handoverOutcomeStatus == statusKey
+                                    OutlinedButton(
+                                        onClick = { handoverOutcomeStatus = statusKey },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = BorderStroke(
+                                            width = if (isStatusSelected) 2.dp else 1.dp,
+                                            color = if (isStatusSelected) layout.first else MaterialTheme.colorScheme.outline
+                                        ),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = if (isStatusSelected) layout.first.copy(alpha = 0.12f) else Color.Transparent
+                                        )
+                                    ) {
+                                        Text(
+                                            text = layout.second,
+                                            color = if (isStatusSelected) layout.first else MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Result/Intervention outcome text (strictly max 200 character count limit)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Beurteilter Verlauf nach Deeskalationsübung:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${handoverResultText.length}/200",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (handoverResultText.length >= 180) Color.Red else MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            
+                            OutlinedTextField(
+                                value = handoverResultText,
+                                onValueChange = { 
+                                    if (it.length <= 200) {
+                                        handoverResultText = it 
+                                    }
+                                },
+                                placeholder = { Text("Spezifischen Interventionsausgang erfassen (z. B. 'Klient ging auf TIPP-Eisreiz ein, Anspannung sank von 9 auf 4. Grounding erfolgreich')", fontSize = 12.sp) },
+                                modifier = Modifier.fillMaxWidth().height(80.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Button to construct report and save locally
+                            Button(
+                                onClick = {
+                                    if (handoverResultText.trim().isEmpty()) {
+                                        android.widget.Toast.makeText(context, "Bitte tragen Sie ein Beobachtungs-Ergebnis ein (max. 200 Zeichen)!", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        viewModel.saveHandoverReport(
+                                            phase = selectedPhase,
+                                            diagnosis = selectedDiagnosis,
+                                            strategies = "Regulations-Handlungsblatt konsultiert",
+                                            result = handoverResultText,
+                                            outcome = handoverOutcomeStatus,
+                                            roomNumber = handoverRoomNum
+                                        )
+                                        android.widget.Toast.makeText(context, "Übergabebericht erfolgreich im Room-Speicher gesichert!", android.widget.Toast.LENGTH_LONG).show()
+                                        
+                                        // Reset fields
+                                        handoverResultText = ""
+                                        handoverRoomNum = ""
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Lokal speichern & Schichtübergabe freischalten", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 9. EXPORTS CARD - Render instant template formatting copy links for the latest saved report
+            if (handoverReports.isNotEmpty()) {
+                item {
+                    val latestReport = handoverReports.first()
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                text = "📋 SCHNELLE EXPORT-SCHABLONE (AKTUELLSTER BERICHT)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        val formatted = com.example.data.HandoverReportGenerator.generateChartEntry(latestReport)
+                                        clipboardManager.setText(AnnotatedString(formatted))
+                                        android.widget.Toast.makeText(context, "Kopiert für Patientenkurve (TXT)!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    ),
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(4.dp)
+                                ) {
+                                    Text("📝 Kurve (TXT)", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val formatted = com.example.data.HandoverReportGenerator.generateMessengerShareText(latestReport)
+                                        clipboardManager.setText(AnnotatedString(formatted))
+                                        android.widget.Toast.makeText(context, "Kopiert für WhatsApp/Signal-Übergabechat!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF25D366),
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(4.dp)
+                                ) {
+                                    Text("💬 Messenger (Emoji)", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 10. HISTORIC SHIFT HANDOVER REPORTS LIST
+            if (handoverReports.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "HISTORISCHE ÜBERGABEBERICHTE (SCHICHTPROTOKOLL)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                    )
+                }
+
+                items(handoverReports) { report ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = com.example.data.HandoverReportGenerator.formatTimestamp(report.timestamp) + " Uhr",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Kompakt: Phase ${report.phase} · Diagnose: ${report.diagnosis}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { viewModel.deleteHandoverReport(report.id) },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Eintrag löschen",
+                                        tint = Color.Red,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Ergebnis: ${report.result}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontStyle = FontStyle.Italic,
+                                fontSize = 11.sp
+                            )
+                            if (report.roomNumber.isNotEmpty()) {
+                                Text(
+                                    text = "Ort: ${report.roomNumber}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                // Fast Kurven copy action
+                                OutlinedButton(
+                                    onClick = {
+                                        val cTxt = com.example.data.HandoverReportGenerator.generateChartEntry(report)
+                                        clipboardManager.setText(AnnotatedString(cTxt))
+                                        android.widget.Toast.makeText(context, "Kurvenbericht kopiert!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.weight(1f).height(28.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text("Kopieren (TXT)", fontSize = 8.sp)
+                                }
+
+                                // Fast messenger export action
+                                OutlinedButton(
+                                    onClick = {
+                                        val mTxt = com.example.data.HandoverReportGenerator.generateMessengerShareText(report)
+                                        clipboardManager.setText(AnnotatedString(mTxt))
+                                        android.widget.Toast.makeText(context, "WhatsApp/Signal Text kopiert!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.weight(1f).height(28.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text("Kopieren (Messenger)", fontSize = 8.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════
+// POLISHED MULTI-STEP ONBOARDING ENGINE
+// ══════════════════════════════════════════════════════
+@Composable
+fun OnboardingConsentDialog(onAccept: () -> Unit) {
+    var currentPage by remember { mutableStateOf(1) } // Page 1: Legals, Page 2: 4-Phases, Page 3: Scenario Quick Demo
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0F172A)) // deep non-distracting screen background
+            .padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 500.dp)
+                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)), // stable dark surface
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Header with step number
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "EINFÜHRUNGSTOUR (SCHRIFT $currentPage / 3)",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = 1.sp
+                    )
+                    
+                    TextButton(onClick = onAccept) {
+                        Text("Tour überspringen", fontSize = 11.sp, color = Color.LightGray)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Page 1: Strict Legal Terms and DSGVO Disclaimer
+                if (currentPage == 1) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = Color(0xFFF59E0B),
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "KLINISCHE SCHWEIGEPFLICHT & COMPLIANCE",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            letterSpacing = 0.5.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "KJP Deeskalieren · Multi-professioneller Akut-Begleiter",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    val terms = listOf(
+                        "Datenschutz (§ 203 StGB Schweigepflicht):" to "Es ist gesetzlich absolut untersagt, konkrete patientenbezogene Verknüpfungen (Klarnamen, Adressen, genaue Stationsangaben) in die App einzugeben. Jede Dateneingabe muss vollständig pseudonymisiert oder anonymisiert erfolgen.",
+                        "Anonymisierungsgebot (DSGVO / BDSG):" to "Nutzen Sie neutrale Fallschablonen wie '15-jähriger Patient mit dissoziativem Flashback...'. Übergabeberichte werden verschlüsselt im lokalen Room-Speicher Ihres Endgeräts gesichert.",
+                        "Haftungsausschluss / Keine Alleinentscheidung:" to "Die App dient als methodischer Reflexionspartner und deeskalative Unterstützung. Im akuten Krisen- oder Gewaltfall ist unverzüglich das stationsspezifische Sicherheitsprotokoll zu aktivieren und der Dienstarzt oder Oberarzt zu alarmieren."
+                    )
+
+                    terms.forEach { (title, description) ->
+                        Column(modifier = Modifier.padding(bottom = 12.dp)) {
+                            Text(
+                                text = "• $title",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFE2E8F0)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = description,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+                }
+
+                // Page 2: Introduce the 4 Phases
+                else if (currentPage == 2) {
+                    Text(
+                        text = "DAS 4-PHASEN-DEESKALATIONS-SYSTEM",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Basierend auf Safewards & deeskalativer Psychologie adaptieren wir uns pro-aktiv an die jeweilige Situation des Jugendlichen.",
+                        fontSize = 11.sp,
+                        color = Color.LightGray,
+                        lineHeight = 15.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    val phasesList = listOf(
+                        Triple("🟢 WEISS-GRÜN (Prävention)", "Aufbau stabiler therapeutischer Allianz, Trigger identifizieren und den persönlichen Krisenplan anpassen.", Color(0xFF10B981)),
+                        Triple("🟡 GELB (Prä-Krise)", "Erste Frühwarnzeichen wahrnehmen. Herunterschalten im Sprach- und Bewegungstempo. Reizfreie Angebote.", Color(0xFFF59E0B)),
+                        Triple("🔴 ROT (Krise / Amygdala-Hijack)", "Verstand ist stummgeschaltet. Hektik reduzieren, Eigenschutz wahren. Nur eine Lead-Stimme steuert.", Color(0xFFEF4444)),
+                        Triple("🔵 BLAU (Nachsorge)", "Nach sichtbarer Beruhigung mindestens 20 Minuten Erholungszeit gewähren. Wertfreies Debriefing unter vier Augen.", Color(0xFF3B82F6))
+                    )
+
+                    phasesList.forEach { (pTitle, desc, color) ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF334155))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(text = pTitle, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(text = desc, color = Color.White, fontSize = 10.sp, lineHeight = 13.sp)
+                            }
+                        }
+                    }
+                }
+
+                // Page 3: Clinical Quick Demo Screen
+                else if (currentPage == 3) {
+                    Text(
+                        text = "DAS SZENARIO IN DER PRAXIS",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Wie arbeitet die KJP-Deeskalations-App auf Akutstation?",
+                        fontSize = 11.sp,
+                        color = Color.LightGray
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "1. SUTUATIVE DETAILS EINGEBEN",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = "Geben Sie bspw. ein: 'Trauma-Diagnose: Patient schreit bei Visite u. verbarrikadiert sich unter Decke.'",
+                                fontSize = 10.sp,
+                                color = Color.White
+                            )
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Text(
+                                text = "2. EFFEKTIVE CO-REGULATION ERHALTEN",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = "Die App analysiert offline oder live Ihre Angaben und generiert konkrete sensorische und verbale Handlungsblätter zur sicheren Interventionssteuerung.",
+                                fontSize = 10.sp,
+                                color = Color.White
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "3. RATE & REPORT",
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981),
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = "Bewerten Sie, ob es gewirkt hat u. generieren Sie einen strukturierten DSGVO Übergabebericht für die Patientenkurve.",
+                                fontSize = 10.sp,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Bottom Control Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Back button
+                    if (currentPage > 1) {
+                        OutlinedButton(
+                            onClick = { currentPage -= 1 },
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color.LightGray)
+                        ) {
+                            Text("Zurück", color = Color.White, fontSize = 11.sp)
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
+
+                    // Next / Start Button
+                    Button(
+                        onClick = {
+                            if (currentPage < 3) {
+                                currentPage += 1
+                            } else {
+                                onAccept()
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Text(
+                            text = if (currentPage < 3) "Weiter" else "Tour abschließen & Starten",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+

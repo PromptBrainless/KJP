@@ -58,4 +58,22 @@ interface DeeskalationDao {
 
     @Query("DELETE FROM icd_diagnoses WHERE codeOrId = :codeOrId")
     suspend fun deleteIcdDiagnosisById(codeOrId: String)
+
+    // Handover Report APIs
+    @Query("SELECT * FROM handover_reports ORDER BY timestamp DESC")
+    fun getAllHandoverReports(): Flow<List<HandoverReport>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHandoverReport(report: HandoverReport)
+
+    @Query("DELETE FROM handover_reports WHERE id = :id")
+    suspend fun deleteHandoverReportById(id: Int)
+
+    // Strategy Ratings APIs
+    @Query("SELECT * FROM strategy_ratings ORDER BY timestamp DESC")
+    fun getAllStrategyRatings(): Flow<List<StrategyRating>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStrategyRating(rating: StrategyRating)
 }
+
