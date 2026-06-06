@@ -218,7 +218,6 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
             ) {
                 val menuTabs = mutableListOf(
                     Triple("HANDBUCH", "Handbuch", Icons.Default.Info),
-                    Triple("TOOLS", "Praxis-Tools", Icons.Default.Star),
                     Triple("ICD_WORKSPACE", "ICD-Symptome", Icons.Default.Search)
                 )
                 if (isAdminUnlocked) {
@@ -267,35 +266,27 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
                         selectedDiagnosisId = selectedDiagnosisId,
                         onDiagnosisSelected = { viewModel.setSelectedDiagnosisId(it) },
                         cmsSections = cmsSections,
-                        onNavigateToTools = { main, sub -> viewModel.navigateToTools(main, sub) },
-                        icdDiagnoses = icdDiagnoses
-                    )
-                    "TOOLS" -> ToolsScreen(
+                        icdDiagnoses = icdDiagnoses,
                         breathingPhase = breathingPhase,
                         breathingSeconds = breathingSeconds,
                         breathingCycles = breathingCycles,
-                        crisisPlans = crisisPlans,
-                        incidentReviews = incidentReviews,
-                        teamLearnings = teamLearnings,
-                        toolsMainTab = toolsMainTab,
-                        toolsSubTab = toolsSubTab,
-                        onToolsMainTabChange = { viewModel.setToolsMainTab(it) },
-                        onToolsSubTabChange = { viewModel.setToolsSubTab(it) },
                         onStartBreathing = { viewModel.startBreathing() },
                         onStopBreathing = { viewModel.stopBreathing() },
+                        crisisPlans = crisisPlans,
                         onSaveCrisisPlan = { init, diag, trig, warn, calm, worsening ->
                             viewModel.saveCrisisPlan(init, diag, trig, warn, calm, worsening)
                         },
                         onDeleteCrisisPlan = { id -> viewModel.deleteCrisisPlan(id) },
+                        incidentReviews = incidentReviews,
                         onSaveIncidentReview = { init, date, desc, trig, stren, less, wellbeing ->
                             viewModel.saveIncidentReview(init, date, desc, trig, stren, less, wellbeing)
                         },
                         onDeleteIncidentReview = { id -> viewModel.deleteIncidentReview(id) },
+                        teamLearnings = teamLearnings,
                         onSaveTeamLearning = { situation, help, role ->
                             viewModel.saveTeamLearning(situation, help, role)
                         },
-                        onDeleteTeamLearning = { id -> viewModel.deleteTeamLearning(id) },
-                        icdDiagnoses = icdDiagnoses
+                        onDeleteTeamLearning = { id -> viewModel.deleteTeamLearning(id) }
                     )
                     "ICD_WORKSPACE" -> {
                         IcdSymptomWorkspaceScreen(
@@ -343,10 +334,118 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
 fun PhasenScreen(
     selectedPhaseId: String,
     onPhaseSelected: (String) -> Unit,
-    cmsSections: List<CmsSection>
+    cmsSections: List<CmsSection>,
+    breathingPhase: BreathingPhase,
+    breathingSeconds: Int,
+    breathingCycles: Int,
+    onStartBreathing: () -> Unit,
+    onStopBreathing: () -> Unit,
+    crisisPlans: List<CrisisPlan>,
+    onSaveCrisisPlan: (String, String, String, String, String, String) -> Unit,
+    onDeleteCrisisPlan: (Int) -> Unit,
+    incidentReviews: List<IncidentReview>,
+    onSaveIncidentReview: (String, String, String, String, String, String, String) -> Unit,
+    onDeleteIncidentReview: (Int) -> Unit,
+    teamLearnings: List<TeamLearning>,
+    onSaveTeamLearning: (String, String, String) -> Unit,
+    onDeleteTeamLearning: (Int) -> Unit,
+    icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
+    val context = LocalContext.current
+    
+    // States for various tools remembered saveably/locally inside page context
+    // Ice/TIPP timer
+    var tTimerActive by remember { mutableStateOf(false) }
+    var tSecondsLeft by remember { mutableStateOf(30) }
+    LaunchedEffect(tTimerActive) {
+        if (tTimerActive) {
+            tSecondsLeft = 30
+            while (tSecondsLeft > 0) {
+                delay(1000)
+                tSecondsLeft--
+            }
+            tTimerActive = false
+        }
+    }
+    
+    // Sensory Reduction state
+    var sensoryLightsDipped by remember { mutableStateOf(false) }
+    var sensoryNoiseClosed by remember { mutableStateOf(false) }
+    var sensoryAudienceRemoved by remember { mutableStateOf(false) }
+    var sensoryDistanceMaintained by remember { mutableStateOf(false) }
+    
+    // Case Simulation State
+    var currentSimIndex by remember { mutableStateOf(0) }
+    var selectedSimAnswerIndex by remember { mutableStateOf<Int?>(null) }
+    var simIsSubmitted by remember { mutableStateOf(false) }
+    
+    // Quizzes State
+    var quizScore by remember { mutableStateOf(0) }
+    var currentQuizIndex by remember { mutableStateOf(0) }
+    var selectedQuizAnswerIndex by remember { mutableStateOf<Int?>(null) }
+    var quizIsSubmitted by remember { mutableStateOf(false) }
+    
+    // Team Learning state
+    var newLearningSit by remember { mutableStateOf("") }
+    var newLearningWorked by remember { mutableStateOf("") }
+    var newLearningRole by remember { mutableStateOf("Pflege") }
+    
+    // Micro Report State
+    var ptInitials by remember { mutableStateOf("") }
+    var selectedBehavior by remember { mutableStateOf("") }
+    var selectedIntervention by remember { mutableStateOf("") }
+    var selectedResult by remember { mutableStateOf("") }
+    var generatedReportText by remember { mutableStateOf("") }
+    
+    // Alert State
+    var assistantActive by remember { mutableStateOf(false) }
+    var activeAlarmLevel by remember { mutableStateOf("GELB") }
+    var alarmSecondsElapsed by remember { mutableStateOf(0) }
+    var alarmRespondersCount by remember { mutableStateOf(0) }
+    var collapseRequested by remember { mutableStateOf(false) }
+    
+    LaunchedEffect(assistantActive) {
+        if (assistantActive) {
+            alarmSecondsElapsed = 0
+            alarmRespondersCount = 0
+            while (true) {
+                delay(1000)
+                alarmSecondsElapsed++
+                if (alarmSecondsElapsed == 4) alarmRespondersCount = 1
+                if (alarmSecondsElapsed == 9) alarmRespondersCount = 2
+                if (alarmSecondsElapsed == 15) alarmRespondersCount = 3
+            }
+        }
+    }
+
     val phaseList = ScientificContent.phases
     val currentPhase = phaseList.first { it.id == selectedPhaseId }
+
+    // Color definitions for clean Material 3 design and color-coded pages
+    val phaseColor = when (selectedPhaseId) {
+        "WEISS" -> Color(0xFFF8FAFC)
+        "GRUEN" -> Color(0xFFF0FDF4)
+        "GELB" -> Color(0xFFFFFBEB)
+        "ROT" -> Color(0xFFFEF2F2)
+        "BLAU" -> Color(0xFFEFF6FF)
+        else -> Color(0xFFF8FAFC)
+    }
+    val textColor = when (selectedPhaseId) {
+        "WEISS" -> Color(0xFF1E293B)
+        "GRUEN" -> Color(0xFF14532D)
+        "GELB" -> Color(0xFF78350F)
+        "ROT" -> Color(0xFF7F1D1D)
+        "BLAU" -> Color(0xFF1E3A8A)
+        else -> Color(0xFF1E293B)
+    }
+    val accentColor = when (selectedPhaseId) {
+        "WEISS" -> Color(0xFF475569)
+        "GRUEN" -> Color(0xFF16A34A)
+        "GELB" -> Color(0xFFD97706)
+        "ROT" -> Color(0xFFDC2626)
+        "BLAU" -> Color(0xFF2563EB)
+        else -> Color(0xFF475569)
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -363,14 +462,14 @@ fun PhasenScreen(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Strukturierter Ablauf nach dem wissenschaftlich fundierten Safewards-Modell. Deeskalation gelingt am effektivsten durch Co-Regulation in Phase GELB.",
+                text = "Navigieren Sie durch die Phasen, um das wissenschaftlich fundierte Curriculum zu ergründen. Jede Phase enthält die passenden interaktiven Praxis-Werkzeuge.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
         }
 
-        // Horizontal Selector
+        // Horizontal Phase Buttons with color-coded badges
         item {
             Row(
                 modifier = Modifier
@@ -380,155 +479,261 @@ fun PhasenScreen(
             ) {
                 phaseList.forEach { phase ->
                     val isSelected = phase.id == selectedPhaseId
-                    val bg = Color(android.graphics.Color.parseColor(phase.colorHex))
-                    val tc = Color(android.graphics.Color.parseColor(phase.textColorHex))
+                    val bgCol = when (phase.id) {
+                        "WEISS" -> if (isSelected) Color(0xFF475569) else Color(0xFFF1F5F9)
+                        "GRUEN" -> if (isSelected) Color(0xFF16A34A) else Color(0xFFDCFCE7)
+                        "GELB" -> if (isSelected) Color(0xFFD97706) else Color(0xFFFEF3C7)
+                        "ROT" -> if (isSelected) Color(0xFFDC2626) else Color(0xFFFEE2E2)
+                        "BLAU" -> if (isSelected) Color(0xFF2563EB) else Color(0xFFDBEAFE)
+                        else -> Color(0xFFE2E8F0)
+                    }
+                    val textCol = if (isSelected) Color.White else when (phase.id) {
+                        "WEISS" -> Color(0xFF334155)
+                        "GRUEN" -> Color(0xFF15803D)
+                        "GELB" -> Color(0xFF92400E)
+                        "ROT" -> Color(0xFF991B1B)
+                        "BLAU" -> Color(0xFF1E40AF)
+                        else -> Color(0xFF475569)
+                    }
+                    val borderCol = when (phase.id) {
+                        "WEISS" -> Color(0xFF94A3B8)
+                        "GRUEN" -> Color(0xFF86EFAC)
+                        "GELB" -> Color(0xFFFCD34D)
+                        "ROT" -> Color(0xFFFCA5A5)
+                        "BLAU" -> Color(0xFF93C5FD)
+                        else -> Color(0xFFCBD5E1)
+                    }
 
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(bg)
-                            .border(
-                                width = if (isSelected) 3.dp else 1.dp,
-                                color = if (isSelected) tc else bg.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(8.dp)
-                            )
+                            .background(bgCol)
+                            .border(1.dp, borderCol, RoundedCornerShape(8.dp))
                             .clickable { onPhaseSelected(phase.id) }
-                            .padding(vertical = 8.dp, horizontal = 2.dp)
+                            .padding(vertical = 8.dp)
                             .testTag("phase_pill_${phase.id.lowercase()}"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = phase.id,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tc
-                            )
-                            Text(
-                                text = when(phase.id) {
-                                    "WEISS" -> "Grund"
-                                    "GRUEN" -> "Präv."
-                                    "GELB" -> "Früh"
-                                    "ROT" -> "Krise"
-                                    "BLAU" -> "Nachb"
-                                    else -> ""
-                                },
-                                fontSize = 9.sp,
-                                color = tc.copy(alpha = 0.8f)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Active Phase Information Card
-        item {
-            val phaseBg = Color(android.graphics.Color.parseColor(currentPhase.colorHex))
-            val phaseTc = Color(android.graphics.Color.parseColor(currentPhase.textColorHex))
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = phaseBg),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = phaseTc,
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Text(
-                                text = "PHASE ${currentPhase.id}",
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
                         Text(
-                            text = currentPhase.subtitle,
-                            fontSize = 12.sp,
-                            fontStyle = FontStyle.Italic,
-                            color = phaseTc.copy(alpha = 0.8f)
+                            text = phase.id,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = textCol
                         )
                     }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = currentPhase.deName,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = phaseTc
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Text(
-                        text = currentPhase.summary,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = phaseTc
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Divider(color = phaseTc.copy(alpha = 0.2f), thickness = 1.dp)
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "NEUROBIOLOGISCHE BASIS:",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = phaseTc.copy(alpha = 0.7f)
-                    )
-                    Text(
-                        text = currentPhase.neuroBasics,
-                        fontSize = 13.sp,
-                        color = phaseTc.copy(alpha = 0.9f)
-                    )
                 }
             }
         }
 
-        // Critical Keys/Interactions
+        // Active Phase Summary and Title Box
         item {
-            Text(
-                text = "Schlüsselaspekte & Deeskalations-Handlungen",
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-
-        items(currentPhase.keyInteractions) { (title, desc) ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                colors = CardDefaults.cardColors(containerColor = phaseColor),
+                border = BorderStroke(1.5.dp, accentColor.copy(alpha = 0.5f))
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = title,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.primary
+                        text = "AKTIVE DEESKALATIONS-PHASE: ${currentPhase.deName}",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.sp,
+                        color = accentColor,
+                        letterSpacing = 1.sp
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = desc,
+                        text = when (selectedPhaseId) {
+                            "WEISS" -> "Basis & therapeutische Haltung: Beziehungsaufbau im stressfreien Milieu."
+                            "GRUEN" -> "Alltagsstruktur & Vorhersehbarkeit: Haltbare Bindungsgrenzen auf Station."
+                            "GELB" -> "Symptom-Warnung & Akute Co-Regulation: Den Amygdala Hijack de-eskalieren."
+                            "ROT" -> "Biologischer Ernstfall & Schutz: Deeskalative Begleitung bei vollem Logikverlust."
+                            "BLAU" -> "Nachbereitung & Reintegration: Schamsensible Aufarbeitung im Team."
+                            else -> currentPhase.deName
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = textColor
+                    )
+                }
+            }
+        }
+
+        // SCIENTIFIC TEXTBOOK SECTION (Fachlich korrektes Nachschlagewerk mit Quellen)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "WISSENSCHAFTLICHES KAPITEL",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.secondary,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    when (selectedPhaseId) {
+                        "WEISS" -> {
+                            Text(
+                                text = "Ventraler Vagus & Physiologische Sicherheit (Porges, 2011):\n" +
+                                        "Die absolute Grundlage jeder erfolgreichen Krisenprävention liegt in der Etablierung biologischer Sicherheit. Nach der Polyvagal-Theorie (S. Porges) signalisiert ein physiologisch ruhiger Zustand (ventraler Vagus) Kontaktbereitschaft, soziale Kooperation und angstfreie Reflexion. Ist das Milieu der psychiatrischen Station von berechenbarem Respekt geprägt, schüttet das Zentralnervensystem des Jugendlichen Oxytocin aus, welches die basale Erregung der Amygdala und somit die Stressachse profund dämpft.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Das Safewards-Modell (Bowers et al., 2014):\n" +
+                                        "Als evidenzbasiertes Rahmenwerk hat Safewards nachgewiesen, dass durch unvoreingenommene Kommunikation und klares Erwartungsmanagement Zwangsausmaße auf Station drastisch sinken. In Phase WEISS arbeiten Pflegekräfte, Ärzte und Therapeuten präventiv an individuellen Krisenplänen (Crisis Plans) mit dem Jugendlichen zusammen. Dies geschieht in einer Atmosphäre der Deeskalation und unbedingten Wertschätzung (Carl Rogers).",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Supervision & Mentalisierung im Team (Fonagy et al., 2014):\n" +
+                                        "KJP-Behandlungsteams laufen Gefahr, unter Stress reaktive Regelsysteme (Power-Struggles) aufzubauen. Regelmäßige multiprofessionelle Supervision schützt vor unbewussten Triangulationen, Splitting und transgenerationellen Retraumatisierungen durch rigide Stationsregeln. Sie erhält die genuine psychotherapeutische Haltung aufrecht.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        "GRUEN" -> {
+                            Text(
+                                text = "Die präventive Macht verlässlicher Alltagsstrukturen:\n" +
+                                        "Verlässlichkeit und strukturierte, transparente Abläufe wirken direkt schützend. Trauma-sensibel erfahrene Jugendliche assoziieren unklare Regeländerungen oder personalabhängig schwankende Ausnahmen nicht mit 'Flexibilität', sondern mit existenzieller Bedrohung und Willkür (Porges, 2011). Dies triggert blitzschnell vegetative Stressreaktionen.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Beziehungstests & Grenzüberschreitung (Bowlby, 1988):\n" +
+                                        "Aus Sicht der Bindungstheorie sind provokante Regelüberschreitungen oder Grenzaustestungen im Stationsalltag unbewusste Festigkeitstests. Der Jugendliche versucht reflexartig zu prüfen, ob die Bezugspersonen (das Stations-Team) emotional haltbar und berechenbar bleiben, oder ob sie mit verdeckter Ablehnung, Gegenangriff oder Distanzierung reagieren. Durch deeskalatives Halten des Rahmens ohne Aggression wird Bindungssicherheit erfahren.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        "GELB" -> {
+                            Text(
+                                text = "Erkennung sympathischer Erregung (Sympathikotonus):\n" +
+                                        "Die Phase GELB repräsentiert den biologischen Weichensteller. Das autonome Nervensystem mobilisiert sich für Flucht oder Kampf (Sympathikus). Klinische Anzeichen umfassen gesteigerte motorische Unruhe, flache Atmung, verkleinertes Sehfeld, Versteifung des Muskeltonus und einsilbige verbale Reaktionsweisen. Der Jugendliche befindet sich im beginnenden Tunnelblick.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Der Scham-Wut-Zyklus und seine Vermeidung (Gottman, 1994):\n" +
+                                        "Jugendliche mit schwerer emotionaler Instabilität (z.B. EIPS) empfinden bei Konflikten unerträglichen Schmerz – tiefste Scham. Da echte Scham neurophysiologisch unerträglich ist, weicht das Gehirn in Millisekunden aus auf schützende Wut. Behandlungsfehler wie laute Kritik, Zurechtweisung vor Dritten oder Bloßstellen eskalieren diesen Scham-Wut-Zyklus dramatisch. Verbale Validation ('Ich sehe deine Not') nimmt den Wind aus den Segeln.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Achtsames Innehalten - Der DBT STOP-Skill (Linehan, 2015):\n" +
+                                        "Bevor eine Akutkraft de-eskalieren kann, muss sie ihr eigenes Nervensystem regulieren: S (Stop), T (Take a step back), O (Observe - eigene Trigger und Gefühle scannen), P (Proceed mindfully). Hierdurch wird verhindert, dass eigene Bedrohungsgesten oder rauer Stimmklang den Jugendlichen tiefer in den Amygdala Hijack stoßen.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        "ROT" -> {
+                            Text(
+                                text = "Der biologische Notstand (Amygdala-Hijack/Goleman, 1995):\n" +
+                                        "In Phase ROT hat die Amygdala das Kommando über das Verhalten vollständig übernommen. Der präfrontale Kortex (Logik, Vernunft, Sprache) is funktionell deaktiviert. Jede verbale Belehrung, moralisierende Vorwürfe oder lange Erklärungen sind völlig nutzlos. Schlimmer noch: Die Amygdala dekodiert jedes zusätzliche laute Wort als unmittelbar physisches Bedrohungssignal und intensiviert die Gegenwehr.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Co-Regulation über Spiegelneurone:\n" +
+                                        "Die Akutkraft wirkt primär als physischer Co-Regulator: Tiefe Atemfrequenz, extrem reduziertes Stimmtempo, tiefer Stimmklang und offene, seitliche Körperhaltung. Über vegetative Spiegelneurone des Jugendlichen signalisiert dies dem Gehirn Entspannung und holt ihn langsam aus dem Kampf-Flucht-Modus zurück.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Klinische Teamkoordination (Zwangsvermeidung nach Safewards):\n" +
+                                        "Ein klar definiertes 3er-Rollenkonzept schützt Patienten und Team:\n" +
+                                        "1. Der Sprecher: Ausschließlich EINE Person spricht mit dem Jugendlichen. Mehrstimmiges Hereinrufen irritiert das ohnehin reizüberflutete Gehirn und triggert Panik-Eskalationen.\n" +
+                                        "2. Die Sicherung: Behält die räumliche Orientierung im Auge, hält sicheren Abstand.\n" +
+                                        "3. Die Koordination: Sichert unauffällig Fluchtwege und fordert im Extremfall ärztliche Unterstützung an.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        "BLAU" -> {
+                            Text(
+                                text = "Die pharmakologische & biologische Kortisol-Latenz (Bowers, 2014):\n" +
+                                        "Nach dem Abklingen des akuten Verhaltens der Phase ROT wirkt der Jugendliche äußerlich oft ruhig. Dies trügt! Die hormonelle Stressachse (Kortisol, Adrenalin) flutet extrem träge ab. Die biologische Abklingzeit beträgt nachweislich 20 bis 60 Minuten. In diesem Zeitraum reagiert das Nervensystem hochgradig reizempfindlich. Frühzeitige moralische Aufarbeitung oder disziplinarische Maßregelungen führen hier verlässlich zur sofortigen Re-Eskalation.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Schamsensibles Beziehungs-Debriefing & Wiederaufbau:\n" +
+                                        "Nach einer Krise plagen den Jugendlichen Ängste vor Beziehungsabbruch, Isolation und Bestrafung (Bowlby, 1988). Das Beziehungsreintegrations-Gespräch auf Basis der Gewaltfreien Kommunikation (GFK) sichert den therapeutischen Rapport ab und stellt die Würde des Jugendlichen unter Wahrung der Grenzen wieder her.",
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // CLINICAL GUIDELINES / NURSING INSTRUCTIONS
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "AKUT-LEITLINIEN FÜR PFLEGE & ÄRZTE:",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = accentColor,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = when (selectedPhaseId) {
+                            "WEISS" -> "• Aktives Beziehungsangebot etablieren (Safewards: 1-to-1-Zeit).\n" +
+                                       "• Krisenplan präventiv mit Patient formulieren und im Zimmer visualisieren.\n" +
+                                       "• Regelmäßige Supervision im multidisziplinären Team wahrnehmen.\n" +
+                                       "• ICD-Symptomregister präventiv für feinsinnige Diagnose-Lernwege nutzen."
+                            "GRUEN" -> "• Strukturierte Stationszeiten, Kiosk- und Mahlzeiten strikt einhalten.\n" +
+                                       "• Transparenz bei Grenzziehungen; keine personellen 'Geheimabsprachen'.\n" +
+                                       "• Bindungstests freundlich-neutral aushalten, Grenzen klar spiegeln.\n" +
+                                       "• SBAR-Schema für strukturierte Übergaben anwenden."
+                            "GELB" -> "• Stimme um 1-2 Oktaven senken und bewusst langsamer sprechen.\n" +
+                                      "• GFK Sprache nutzen: Beobachtung nennen, Scham validieren.\n" +
+                                      "• Physische Reizreduktion einleiten: Reize dämpfen, Gang räumen.\n" +
+                                      "• DBT Skills wie Sensory-Kit, Eispack oder Ball-Kompression bereithalten."
+                            "ROT" -> "• Ausschließlich EINE Bezugsperson heranziehen (Sprecher-Rolle).\n" +
+                                     "• Mindestens 1,5 Meter Abstand (Bedrohungsreflexe im Gesichtsfeld dämpfen).\n" +
+                                     "• Körperhaltung seitlich geöffnet einnehmen. Niemals über den Patienten beugen.\n" +
+                                     "• Bei körperlicher Fremdgefährdung: Ärztlichen Notfallkontakt (Zentr. 3012) unverzüglich alarmieren."
+                            "BLAU" -> "• Mindestens 45 Minuten 'Kortisol-Latenz' absolut reizarm abwarten.\n" +
+                                      "• Beziehungs-Reparaturgespräch schamsensibel führen.\n" +
+                                      "• Safewards Post-Incident-Review im Dienstzimmer digital loggen.\n" +
+                                      "• Kollegiale Fallbesprechung mit Kollegen posten für gemeinsame Lerneffekte."
+                            else -> "Keine spezifischen Handlungsleitlinien ausgewiesen."
+                        },
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -537,70 +742,966 @@ fun PhasenScreen(
             }
         }
 
-        // Don'ts - Warnings
+        // CRITICAL DON'TS (ESKALATIONSTREIBER)
         item {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF5F5)),
-                border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
-                shape = RoundedCornerShape(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFEE2E2)),
+                border = BorderStroke(1.dp, Color(0xFFFCA5A5))
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "Fehler vermeiden",
-                            tint = Color(0xFFB91C1C)
-                        )
+                        Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = Color(0xFF991B1B), modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "KRITISCHE DON'TS (ESKALATIONSTREIBER):",
+                            text = "KRITISCHES DON'T (ESKALATIONSCHRAUBE):",
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = Color(0xFF991B1B)
+                            color = Color(0xFF991B1B),
+                            letterSpacing = 0.5.sp
                         )
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    currentPhase.donts.forEach { dont ->
-                        Row(modifier = Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.Top) {
-                            Text(text = "• ", fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
-                            Text(
-                                text = dont,
-                                fontSize = 12.sp,
-                                color = Color(0xFF334155),
-                                lineHeight = 16.sp
-                            )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = when (selectedPhaseId) {
+                            "WEISS" -> "Keine Krisenpläne pflegen! Den Jugendlichen unvorbereitet in die Krise laufen lassen. Mangelnde Team-Supervision tolerieren, was unbewusstes Splitting-Verhalten auf Station Vorschub leistet."
+                            "GRUEN" -> "Rigide oder willkürliche Regeländerungen je nach Sympathie der Schichtleitung einführen. Grenzüberschreitungen des Jugendlichen persönlich nehmen und emotional beleidigt reagieren."
+                            "GELB" -> "Die Erregung vor der gesamten Patientengruppe bagatellisieren, laut auf dem Gang kritisieren oder den Jugendlichen bloßstellen. Das erzeugt extreme Abwehr-Schamreaktionen und sofortige Gewalt."
+                            "ROT" -> "Mit mehreren Personen gleichzeitig lautstark auf den Jugendlichen einreden oder drohend auf ihn zugehen. Ihn in ein Eck drängen. Das Gehirn schaltet im Hijack-Status dann unweigerlich auf Kampf."
+                            "BLAU" -> "Sofort nach der Krise auf unruhige Klärungen drängen oder Strafen verkünden. Das strapazierte Nervensystem befindet sich noch mitten in der biologischen Kortisol-Latenz und explodiert erneut."
+                            else -> "Keine Eskalationsschrauben ausgewiesen."
+                        },
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = Color(0xFF7F1D1D)
+                    )
+                }
+            }
+        }
+
+        // INTEGRATION OF STRATEGIC CLINICAL SCREEN PATH FOR GRUEN
+        if (selectedPhaseId == "GRUEN") {
+            item {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "KLINISCHE DIAGNOSERICHTLINIEN (INTEGRIERT)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Lernen Sie, wie sich die deeskalierenden Strategien zielgerichtet auf spezifische Krankheitsbilder anwenden lassen. Für ausführliche Pflegeprozedere öffnen Sie Kapitel 02.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            items(icdDiagnoses) { d ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(text = d.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp)) {
+                                Text(text = d.codeOrId, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
+                            }
                         }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = d.dynamik, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 15.sp)
                     }
                 }
             }
         }
 
-        if (currentPhase.additionalTips.isNotEmpty()) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                    shape = RoundedCornerShape(8.dp)
+        // SPLIT LINE / HEADER FOR THE PRACTICAL INTERACTIVE WORKSHEET TOOL
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.2.dp)
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            val (toolIcon, toolTitle, toolSubtitle) = when (selectedPhaseId) {
+                "WEISS" -> Triple(Icons.Default.Add, "Interaktive Behandlungs-Krisenpläne (Room SQL)", "Erfassen Sie schützende Trigger und Beruhigungsfaktoren bei Jugendlichen präventiv in der Datenbank.")
+                "GRUEN" -> Triple(Icons.Default.Menu, "Klinische Fallsimulation & Wissens-Quizzes", "Trainieren Sie Ihre deeskalativen Entscheidungen für den Ernstfall bei traumatisierten Patienten.")
+                "GELB" -> Triple(Icons.Default.Build, "2-Tap Mikro-Bericht & Sensor-Checklist", "Generieren Sie DSGVO-konforme Stations-Verlaufsberichte live durch Antippen.")
+                "ROT" -> Triple(Icons.Default.PlayArrow, "Atem-Taktgeber & Team-Intervent.", "Physiologische Atemanleitung zur Co-Regulation und Notruf-Simulation auf Station.")
+                "BLAU" -> Triple(Icons.Default.List, "Sicherheits-Vorfalls-Analysen & Peer-Supervision", "Archivieren Sie systematische Safewards Review-Protokolle unaufgeregt nach Krisen.")
+                else -> Triple(Icons.Default.Star, "Praxis-Werkzeug", "Werkzeug zur Ausführung deeskalativer Hilfen.")
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(accentColor.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Icon(imageVector = toolIcon, contentDescription = null, tint = accentColor, modifier = Modifier.size(20.dp))
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "INTERAKTIVES PRAXIS-WERKZEUG",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.sp,
+                        color = accentColor,
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = toolTitle,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = toolSubtitle,
+                fontSize = 11.2.sp,
+                lineHeight = 15.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+        }
+
+        // TOOL SECTIONS CORRESPONDING TO ACTIVE PHASES
+        when (selectedPhaseId) {
+            "WEISS" -> {
+                // WEISS TOOL: CRISIS PLANS WORKSPACE (ROOM SQL DB Integration)
+                item {
+                    CrisisPlanWorkspaceSection(
+                        crisisPlans = crisisPlans,
+                        onSaveCrisisPlan = onSaveCrisisPlan,
+                        onDeleteCrisisPlan = onDeleteCrisisPlan,
+                        icdDiagnoses = icdDiagnoses
+                    )
+                }
+            }
+            "GRUEN" -> {
+                // GRUEN TOOL: DECISION SIMULATION
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().testTag("scenario_training_card"),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "Tipp",
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = currentPhase.additionalTips,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            lineHeight = 16.sp
-                        )
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "Szenario-Entscheidungs-Training", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Lösen Sie reale Akutfälle. Ihre Entscheidungspfade deeskalieren oder verschlimmern die Erregung aus neurobiologischer Sicht.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Szenario ${currentSimIndex + 1} von 2", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                TextButton(onClick = {
+                                    currentSimIndex = (currentSimIndex + 1) % 2
+                                    selectedSimAnswerIndex = null
+                                    simIsSubmitted = false
+                                }) {
+                                    Text("Nächstes Szenario →", fontSize = 11.sp)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            val currentScenario = if (currentSimIndex == 0) {
+                                Triple(
+                                    "Frühwarnung bei Autismus (ASS) u18",
+                                    "Ein 15-jähriger Junge mit ASS steht vor dem verschlossenen Stationskiosk, schreit hysterisch und tritt aggressiv gegen das Gitter, weil er seine vertraute Limonadenmarke heute nicht erhält:",
+                                    listOf(
+                                        "A) Ihm ruhig und bestimmt erklären, dass die Kioskzeit abgelaufen ist und die Hausordnung für alle gleich gilt.",
+                                        "B) Die Limonade sofort herausgeben, um die Aggression abzufangen, selbst wenn es regelfreie Ausnahmen erzeugt.",
+                                        "C) Seine sensorische Überreizung validieren, den Fluchtweg unversperrt seitlich absichern, Reizquellen dämpfen und ihm eine visuell strukturierte Alternative anbieten."
+                                    )
+                                )
+                            } else {
+                                Triple(
+                                    "EIPS Krisenregulation am Gang",
+                                    "Eine 16-jährige Patientin mit EIPS (GELB) läuft weinend über den Stationsgang und schlägt sich leicht den Kopf an die Wand. Ein Kollege herrscht sie im Gang lautstark an, sofort in ihr Zimmer zu verschwinden:",
+                                    listOf(
+                                        "A) Sich lautstark einmischen und den Kollegen vor der Gruppe kritisieren, um die Patientin zu schützen.",
+                                        "B) Die Patientin ruhig ansprechen, sie diskret in ein ruhiges Therapiezimmer begleiten, Gefühle validieren und ihr ein DBT TIPP Eispack-Kohlereiz anbieten.",
+                                        "C) Den Kollegen gewähren lassen, da beziehungsorientierte Zuwendung in diesem Moment das selbstverletzende Verhalten ungewollt verstärken würde."
+                                    )
+                                )
+                            }
+
+                            Text(text = currentScenario.first, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(text = currentScenario.second, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, lineHeight = 16.sp)
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            currentScenario.third.forEachIndexed { idx, ans ->
+                                val isSelected = selectedSimAnswerIndex == idx
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clickable {
+                                            if (!simIsSubmitted) {
+                                                selectedSimAnswerIndex = idx
+                                            }
+                                        },
+                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Text(text = ans, fontSize = 11.sp, modifier = Modifier.padding(8.dp))
+                                }
+                            }
+
+                            if (selectedSimAnswerIndex != null && !simIsSubmitted) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = { simIsSubmitted = true },
+                                    modifier = Modifier.fillMaxWidth().testTag("solve_sim_button")
+                                ) {
+                                    Text("Entscheidung auswerten")
+                                }
+                            }
+
+                            if (simIsSubmitted) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                val explanation = if (currentSimIndex == 0) {
+                                    when (selectedSimAnswerIndex) {
+                                        0 -> "❌ Nicht optimal! Bei ASS blockiert extremer Stress die rationale Informationsverarbeitung. Das Beharren auf Paragraphen (Hausordnung) wirkt wie Verachtung und triggert massiven Amygdala Hijack."
+                                        1 -> "⚠️ Nur bedingter Teilerfolg! Das sofortige Nachgeben verhindert zwar die Eskalation, trainiert jedoch unbewusst instrumentelle Gewalt und begünstigt Splitting-Dynamiken auf Station."
+                                        else -> "✓ Ausgezeichnete Deeskalation! Gefühlsvalidation nimmt die Not an. Durch die sensorische Abkühlung (Reizreduktion) und das visuelle Angebot wird der ventrale Vagus reaktiviert."
+                                    }
+                                } else {
+                                    when (selectedSimAnswerIndex) {
+                                        0 -> "❌ Fatal! Das Kritisieren des Kollegen spaltet das Therapeutenteam (Splitting-Falle). Dies verstärkt bei EIPS das Gefühl unzuverlässiger Bindungsgrenzen."
+                                        1 -> "✓ Großartig reguliert! Die Verlegung in ein ruhiges Zimmer verhindert die schambeladene Flureskalation vor Dritten. Das Eispack-Kälte-TIPP-Angebot dämpft physiologische Übererregung augenblicklich."
+                                        else -> "❌ Vorsicht! Die Annahme, dass emotionale Notfälle bei EIPS reine Manipulation zur Belohnung sind, ist neurobiologisch überholt. Unsichere Bindungsmuster brauchen feinfühlige Haltepunkte."
+                                    }
+                                }
+
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text("FEEDBACK & ERKLÄRUNG:", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(text = explanation, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer, lineHeight = 15.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // GRUEN TOOL: DEESKALATION WISSENSTEST (QUIZ)
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().testTag("quiz_card"),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "Deeskalations-Wissens-Check", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Prüfen Sie Ihr theoretisches Fachwissen über Safewards-Konzepte, Polyvagal-Theorie, GFK und DBT.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Frage ${currentQuizIndex + 1} von 3", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text("Punkte: $quizScore", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            val quizQuestions = listOf(
+                                Triple(
+                                    "Wie lange dauert die biologische 'Kortisol-Latenz' nach heftigen emotionalen Krisen (KJP)?",
+                                    listOf(
+                                        "A) Ca. 2-5 Minuten, danach ist das System sofort wieder neutral",
+                                        "B) Mindestens 20-60 Minuten, in denen Verhandlungen wegen Re-Eskalationsgefahr warten müssen",
+                                        "C) Exakt 24 Stunden, in denen der Patient das Zimmer nicht verlassen sollte"
+                                    ),
+                                    1
+                                ),
+                                Triple(
+                                    "Welchen physiologischen Effekt bewirkt das DBT TIPP Temperatur-Element (Eispack im Gesicht)?",
+                                    listOf(
+                                        "A) Triggert den Tauchreflex, der den Puls augenblicklich drosselt",
+                                        "B) Es erzeugt langanhaltende Schmerzen zur Reizüberlagerung",
+                                        "C) Es blockiert die visuelle Perceptual Narrowing Seh-Einschränkung"
+                                    ),
+                                    0
+                                ),
+                                Triple(
+                                    "Wie sollte Kritik an Jugendlichen geäußert werden, um extreme Scham-Wut-Spiralen abzufangen?",
+                                    listOf(
+                                        "A) Unmittelbar auf dem Gang, um ein klares Statement für alle Akteure zu setzen",
+                                        "B) Unter vier Augen in einem separaten Rückzugsraum",
+                                        "C) Durch konsequentes Ignorieren über den restlichen Tag"
+                                    ),
+                                    1
+                                )
+                            )
+
+                            val qObj = quizQuestions[currentQuizIndex]
+                            Text(text = qObj.first, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            qObj.second.forEachIndexed { index, ansOption ->
+                                val isSelected = selectedQuizAnswerIndex == index
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clickable {
+                                            if (!quizIsSubmitted) {
+                                                selectedQuizAnswerIndex = index
+                                            }
+                                        }
+                                        .testTag("quiz_ans_$index"),
+                                    color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.background,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Text(text = ansOption, fontSize = 11.sp, modifier = Modifier.padding(8.dp))
+                                }
+                            }
+
+                            if (selectedQuizAnswerIndex != null && !quizIsSubmitted) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        quizIsSubmitted = true
+                                        if (selectedQuizAnswerIndex == qObj.third) {
+                                            quizScore += 10
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().testTag("submit_quiz_answer")
+                                ) {
+                                    Text("Antwort überprüfen")
+                                }
+                            }
+
+                            if (quizIsSubmitted) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                val isCorrect = selectedQuizAnswerIndex == qObj.third
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isCorrect) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)
+                                    )
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text(
+                                            text = if (isCorrect) "✓ Richtig gelöst!" else "✗ Leider falsch!",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = if (isCorrect) Color(0xFF166534) else Color(0xFF991B1B)
+                                        )
+                                        Text(
+                                            text = "Wissenschaftlicher Hintergrund: " + if (currentQuizIndex == 0) {
+                                                "Kortisol flutet im Blut extrem träge ab. Wer zu früh klärt, re-eskaliert unfreiwillig, da die Amygdala hochsensibel geschaltet bleibt."
+                                            } else if (currentQuizIndex == 1) {
+                                                "Der parasympathische Vagus-Ast wird durch Kälte-Thermorezeptoren getriggert – senkt die vegetative Grundspannung."
+                                            } else {
+                                                "Scham ist die schmerzhafteste Emotion. Kritik vor Dritten vernichtet das Selbstwertgefühl und mündet fast immer in Gegenangriffe."
+                                            },
+                                            fontSize = 10.sp,
+                                            color = if (isCorrect) Color(0xFF14532D) else Color(0xFF7F1D1D)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Button(
+                                    onClick = {
+                                        if (currentQuizIndex < 2) {
+                                            currentQuizIndex++
+                                        } else {
+                                            currentQuizIndex = 0
+                                            quizScore = 0
+                                        }
+                                        selectedQuizAnswerIndex = null
+                                        quizIsSubmitted = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (currentQuizIndex < 2) "Nächste Frage" else "Quiz neustarten")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "GELB" -> {
+                // GELB TOOL: 2-TAP MIKRO-REPORT-GENERATOR (Verlaufsbericht für Doku)
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "2-Tap Mikro-Bericht-Dokumentation", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Tippen Sie das Verhalten des Jugendlichen und Ihre Deeskalations-Intervention an. Das Tool generiert einen professionellen, DSGVO-konformen Verlaufsbericht für die Pflegedokumentation.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedTextField(
+                                value = ptInitials,
+                                onValueChange = { ptInitials = it },
+                                label = { Text("Kürzel Jugendliche(r) bzw. Patient (Optional, z.B. J.K.)", fontSize = 11.sp) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().testTag("report_initials_input")
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("1. VERHALTEN / GERÄUSCHPEGEL (1-Tap):", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(
+                                    "Starke innere Anspannung & unruhige Gereiztheit (GELB)",
+                                    "Verbale Drohung und Grenzüberschreitung am Gang",
+                                    "Dissoziative Erstarrung & lautloser Rückzug (ROT)",
+                                    "Körperliche Aggression gegen Inventar / Türen schlagen",
+                                    "Scham-Abwehr & laute verbale Provokation"
+                                ).forEach { behavior ->
+                                    val isSel = selectedBehavior == behavior
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedBehavior = behavior }
+                                            .testTag("report_behavior_${behavior.take(4).lowercase()}"),
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isSel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                        border = BorderStroke(1.dp, if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    ) {
+                                        Text(text = behavior, fontSize = 11.sp, modifier = Modifier.padding(8.dp), fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text("2. DEESKALATIONS-INTERVENTION (2-Tap):", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(
+                                    "Validation und schamsensibles GFK-Einfühlungs-Gespräch",
+                                    "Co-regulatives Atmen & Stimmabsenkung um eine Oktave",
+                                    "Reizreduktion und physische Distanzgewährung durchgeführt",
+                                    "Anleitung DBT STOP & TIPP Kältereiz (Eispack im Nacken)",
+                                    "Regulationsangebot über Sensory-Kit (Gewichtsdecke & Kopfhörer)"
+                                ).forEach { inter ->
+                                    val isSel = selectedIntervention == inter
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedIntervention = inter }
+                                            .testTag("report_inter_${inter.take(4).lowercase()}"),
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isSel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                        border = BorderStroke(1.dp, if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    ) {
+                                        Text(text = inter, fontSize = 11.sp, modifier = Modifier.padding(8.dp), fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text("3. ERGEBNIS / VERLAUF:", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf(
+                                    "Erfolgreich co-reguliert, Jugendliche(r) entspannt in Phase GRÜN",
+                                    "Situation beruhigt, engmaschige Begleitung auf Station fortgesetzt",
+                                    "Arzt zur diagnostischen Klärung und Absicherung hinzugezogen"
+                                ).forEach { res ->
+                                    val isSel = selectedResult == res
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { selectedResult = res }
+                                            .testTag("report_res_${res.take(4).lowercase()}"),
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isSel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                        border = BorderStroke(1.dp, if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    ) {
+                                        Text(text = res, fontSize = 11.sp, modifier = Modifier.padding(8.dp), fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = {
+                                    val timeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+                                    val init = if (ptInitials.isNotBlank()) "bei Patient ($ptInitials)" else "beim Jugendlichen"
+                                    generatedReportText = "Doku $timeStr Uhr: Akute Erregung $init.\nVerhaltensaspekt: $selectedBehavior.\nKlinische Deeskalation: $selectedIntervention.\nVerlauf: $selectedResult. Keine freiheitsentziehenden Maßnahmen nötig."
+                                },
+                                enabled = selectedBehavior.isNotEmpty() && selectedIntervention.isNotEmpty() && selectedResult.isNotEmpty(),
+                                modifier = Modifier.fillMaxWidth().testTag("compile_microreport")
+                            ) {
+                                Text("Berichtsbaustein generieren")
+                            }
+
+                            if (generatedReportText.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text("GENERIERTER VERLAUFSBERICHT:", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = generatedReportText,
+                                        fontSize = 11.sp,
+                                        fontStyle = FontStyle.Italic,
+                                        modifier = Modifier.padding(8.dp)
+                                    )
+                                }
+                                Button(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                        val clip = android.content.ClipData.newPlainText("Patientenbericht", generatedReportText)
+                                        clipboard.setPrimaryClip(clip)
+                                        Toast.makeText(context, "Doku-Text in Zwischenablage kopiert!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Eintrag kopieren")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // GELB TOOL: SENSORY REACTION CHECKLIST & VERBAL DEESKALATIONS-TEMPLATES
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text("Reizreduktions-Prozedere & Sensory-Kit", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Haken Sie reizminimierende Schritte nacheinander ab, um die sympathikotone Erregung an Reizquellen dämpfen.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = sensoryLightsDipped, onCheckedChange = { sensoryLightsDipped = it }, modifier = Modifier.testTag("chk_lights"))
+                                    Text("Beleuchtung dämpfen (Deckenlicht aus, Akutstation dimmen)", fontSize = 11.5.sp)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = sensoryNoiseClosed, onCheckedChange = { sensoryNoiseClosed = it })
+                                    Text("Lärmquellen senken (Dienstzimmertür zu, Kopfhörer anbieten)", fontSize = 11.5.sp)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = sensoryAudienceRemoved, onCheckedChange = { sensoryAudienceRemoved = it })
+                                    Text("Zuschauer entfernen (Mitpatienten diskret in Zimmer schicken)", fontSize = 11.5.sp)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = sensoryDistanceMaintained, onCheckedChange = { sensoryDistanceMaintained = it })
+                                    Text("Abstand halten (Eigenschutz; mindestens 1.5 Meter Luftraum)", fontSize = 11.5.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text("Klinische Deeskalations-Gesprächsskripte", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "• Validation: „Ich höre dich und sehe, wie extrem wütend du bist. Ich bin hier, um dich absolut abzusichern, nicht um dich zu bestrafen.“\n" +
+                                        "• Grenzen spiegeln: „Ich möchte dein Anliegen verstehen. Bitte senke deine Stimme, damit wir gemeinsam nach einer ehrlichen Lösung suchen können.“\n" +
+                                        "• Ausstieg anbieten: „Du darfst jederzeit in dein Zimmer oder in den Ruheraum gehen, wenn es dir am Flur gerade zu viele Reize sind.“",
+                                fontSize = 11.5.sp,
+                                lineHeight = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            "ROT" -> {
+                // ROT TOOL: SYSTEMIC PACED BREATHING (utilizing Paced Breathing component)
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "Co-Regulativer Atem-Taktgeber", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Atmen Sie gemeinsam mit dem Jugendlichen in diesem Takt. Längere Ausatmung aktiviert augenblicklich das parasympathische Vagus-Cardio-System.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            BreathingGuideComponent(
+                                breathingPhase = breathingPhase,
+                                breathingSeconds = breathingSeconds,
+                                breathingCycles = breathingCycles,
+                                onStartBreathing = onStartBreathing,
+                                onStopBreathing = onStopBreathing
+                            )
+                        }
+                    }
+                }
+
+                // ROT TOOL: DBT COOL DOWN TIMEOUT (ICE PACK COUNTDOWN)
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "DBT TIPP Kältereiz-Timer (Eispack)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Legen Sie dem Jugendlichen ein eiskaltes Gelfalt-Eispack auf Gesicht oder Nacken für 30 Sekunden auf. Der ausgelöste Tauchreflex senkt Herzschlag und Pulsfrequenz vegetativ ab.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                                Surface(
+                                    color = if (tTimerActive) Color(0xFFEFF6FF) else MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = CircleShape,
+                                    border = BorderStroke(2.dp, if (tTimerActive) Color(0xFF2563EB) else Color.Transparent),
+                                    modifier = Modifier.size(80.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = if (tSecondsLeft > 0) "$tSecondsLeft s" else "STOPP",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 20.sp,
+                                            color = if (tTimerActive) Color(0xFF2563EB) else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Button(
+                                        onClick = { tTimerActive = true },
+                                        enabled = !tTimerActive,
+                                        modifier = Modifier.weight(1f).testTag("start_tipp_timer_btn")
+                                    ) {
+                                        Text("Reiz starten (30s)", fontSize = 11.sp)
+                                    }
+                                    Button(
+                                        onClick = { tTimerActive = false; tSecondsLeft = 30 },
+                                        enabled = tTimerActive,
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Abbrechen", fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ROT TOOL: BACKUP ALERT NOTFALL-SIMULATION ON STATION
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "Rückhalt anforderndes Team-Assistenz-System (Simulation)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Sollte eine akute Gefährdung bestehen, fordern Sie Unterstützung an. Die Simulation dispatcht sofort Behandler-Verstärkung.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (!assistantActive) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Wählen Sie die therapeutische Notrufstufe:", fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        listOf("GELB" to Color(0xFFD97706), "ORANGE" to Color(0xFFEA580C), "NOTFALL" to Color(0xFFDC2626)).forEach { (lvl, col) ->
+                                            Button(
+                                                onClick = {
+                                                    activeAlarmLevel = lvl
+                                                    assistantActive = true
+                                                    collapseRequested = false
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = col),
+                                                modifier = Modifier.weight(1f).testTag("trigger_alert_$lvl")
+                                            ) {
+                                                Text(lvl, fontSize = 10.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF2F2)),
+                                    border = BorderStroke(1.dp, Color(0xFFFCA5A5))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFFDC2626))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(text = "ASSISTENZAKTIVIERUNG LAUFT! (Stufe: $activeAlarmLevel)", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFDC2626))
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("• Vergangene Sekunden: $alarmSecondsElapsed", fontSize = 11.sp)
+                                        Text("• Kollegiale Unterstützung vor Ort: $alarmRespondersCount Behandler eingetroffen", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        
+                                        if (alarmSecondsElapsed >= 15) {
+                                            Text("• Dr. Becker (Oberarzt-Dienst) wurde per Krisentelefon hinzugerufen.", fontSize = 11.sp, fontStyle = FontStyle.Italic)
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Button(
+                                        onClick = { collapseRequested = !collapseRequested },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (collapseRequested) Color(0xFF1D4ED8) else Color(0xFF6B7280)
+                                        ),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(if (collapseRequested) "Ablösung gerufen!" else "Sprecher ablösen", fontSize = 11.sp)
+                                    }
+                                    Button(
+                                        onClick = {
+                                            assistantActive = false
+                                            collapseRequested = false
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF166534)),
+                                        modifier = Modifier.weight(1f).testTag("dismiss_alarm")
+                                    ) {
+                                        Text("Entwarnung / Reset", fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ROT TOOL: CLINICAL EMERGENCY INFO DIRECTORY & CONTACTS & SBAR
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text("Zwangsvermeidungs- & Schutz-Prozedere", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "1. Letzte Ratio: Freiheitsentziehende Maßnahmen (Fixierung, Isolierung) sind die absolute Notausnahme bei unmittelbarer Selbst-/Fremdgefährdung.\n" +
+                                        "2. Einholen: Arztliche Anordnung unverzüglich einholen.\n" +
+                                        "3. Dauer-Sitzwache: 1-to-1 Begleitung durch Pflegekraft unterbrechungsfrei herstellen.\n" +
+                                        "4. Vitalwerte: Alle 15 Minuten Puls, Atmung, Bewusstseinslage messen und dokumentieren.\n" +
+                                        "5. Debriefing: Nach jeder Maßnahme strukturierte Nachbesprechung (PIR) mit Arzt, Patient und Team binnen 24h.",
+                                fontSize = 11.5.sp,
+                                lineHeight = 16.sp,
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text("Klinische Telefonnummern im Krisenfall", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("• KJP Arzt (Allgemeine Zentrale): Tel: 3012\n" +
+                                    "• Oberarzt-Diensttelefon (Harburg): Tel: 3044\n" +
+                                    "• Kriseninterventionsdienst (Mobil): Tel: 9110\n" +
+                                    "• Pflegedienstleitung Akutstation: Tel: 4402\n" +
+                                    "• Kälte-Eispacks für DBT-TIPP: Dienstzimmer-Kühlschrank 1. Stock / Schrank 2A",
+                                fontSize = 11.5.sp,
+                                lineHeight = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            "BLAU" -> {
+                // BLAU TOOL: POST-INCIDENT REVIEWS ARCHIV (Room DB integration)
+                item {
+                    IncidentReviewWorkspaceSection(
+                        reviews = incidentReviews,
+                        onSaveIncidentReview = onSaveIncidentReview,
+                        onDeleteIncidentReview = onDeleteIncidentReview
+                    )
+                }
+
+                // BLAU TOOL: CO-LEARNING BOARD FOR TEAM BEST-PRACTICES (Room DB integration)
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(text = "Kollegiales Best-Practice Board", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Was hat in einer Krise funktioniert? Teilen Sie Ihre Erfahrungen unaufgeregt und offline-verfügbar für das gesamte Team.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedTextField(
+                                value = newLearningSit,
+                                onValueChange = { newLearningSit = it },
+                                label = { Text("Situation / Auslöser (z.B. Visite ADHS)", fontSize = 11.sp) },
+                                modifier = Modifier.fillMaxWidth().testTag("learning_input_situation")
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            OutlinedTextField(
+                                value = newLearningWorked,
+                                onValueChange = { newLearningWorked = it },
+                                label = { Text("Was hat geholfen? (z.B. Timebox visuell gestellt)", fontSize = 11.sp) },
+                                modifier = Modifier.fillMaxWidth().testTag("learning_input_worked")
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Rolle:", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                listOf("Pflege", "Arzt", "Therapeut").forEach { role ->
+                                    val isSel = newLearningRole == role
+                                    FilterChip(
+                                        selected = isSel,
+                                        onClick = { newLearningRole = role },
+                                        label = { Text(role, fontSize = 10.sp) }
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = {
+                                    onSaveTeamLearning(newLearningSit, newLearningWorked, newLearningRole)
+                                    newLearningSit = ""
+                                    newLearningWorked = ""
+                                    Toast.makeText(context, "Erfahrung kollegial geteilt!", Toast.LENGTH_SHORT).show()
+                                },
+                                enabled = newLearningSit.isNotBlank() && newLearningWorked.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth().testTag("save_team_learning_button")
+                            ) {
+                                Text("Auf Board posten")
+                            }
+                        }
+                    }
+                }
+
+                if (teamLearnings.isEmpty()) {
+                    item {
+                        Text("Etablierte Best-Practices der Akutstation:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                    }
+                    val defaultPractices = listOf(
+                        Triple("ASS Reizüberflutung", "Sinnvoll: Gewichtsdecke und Kopfhörer im Entspannungsraum unaufgefordert anbieten.", "Pflege"),
+                        Triple("ADHS Entladung", "Sinnvoll: Klare, visuelle Sanduhr einsetzen und Bewegungsalternativen im KJP-Schulhof erlauben.", "Therapeut"),
+                        Triple("EIPS Dissoziation", "Sinnvoll: Kältesensoren aktivieren (Eispack im Nacken) statt kognitiven Dialogen.", "Arzt")
+                    )
+                    items(defaultPractices) { (sit, helped, role) ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(text = "Situation: $sit", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp)) {
+                                        Text(text = role, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(text = "Hilfreich: $helped", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                } else {
+                    item {
+                        Text("Kollegiale Beiträge (${teamLearnings.size}):", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    items(teamLearnings) { learning ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(text = "Klient/Sit: ${learning.situation}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(4.dp)) {
+                                            Text(text = learning.submittedByRole, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        IconButton(
+                                            onClick = { onDeleteTeamLearning(learning.id) },
+                                            modifier = Modifier.size(24.dp).testTag("delete_learning_${learning.id}")
+                                        ) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Löschen", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(text = "Hilfreich: ${learning.whatWorked}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
@@ -869,8 +1970,21 @@ fun HandbuchScreen(
     selectedDiagnosisId: String,
     onDiagnosisSelected: (String) -> Unit,
     cmsSections: List<CmsSection>,
-    onNavigateToTools: (String, String) -> Unit,
-    icdDiagnoses: List<com.example.data.IcdDiagnosis>
+    icdDiagnoses: List<com.example.data.IcdDiagnosis>,
+    breathingPhase: BreathingPhase,
+    breathingSeconds: Int,
+    breathingCycles: Int,
+    onStartBreathing: () -> Unit,
+    onStopBreathing: () -> Unit,
+    crisisPlans: List<CrisisPlan>,
+    onSaveCrisisPlan: (String, String, String, String, String, String) -> Unit,
+    onDeleteCrisisPlan: (Int) -> Unit,
+    incidentReviews: List<IncidentReview>,
+    onSaveIncidentReview: (String, String, String, String, String, String, String) -> Unit,
+    onDeleteIncidentReview: (Int) -> Unit,
+    teamLearnings: List<TeamLearning>,
+    onSaveTeamLearning: (String, String, String) -> Unit,
+    onDeleteTeamLearning: (Int) -> Unit
 ) {
     var selectedChapterId by remember { mutableStateOf<Int?>(null) }
 
@@ -880,16 +1994,16 @@ fun HandbuchScreen(
             onSearchChange = onSearchChange,
             cmsSections = cmsSections,
             onNavigateToChapter = { chapterId ->
-                selectedChapterId = chapterId
+                selectedChapterId = if (chapterId in 1..3) chapterId else 1
                 onSearchChange("")
             },
             onNavigateToPhase = { phaseId ->
-                selectedChapterId = 4
+                selectedChapterId = 1
                 onPhaseSelected(phaseId)
                 onSearchChange("")
             },
             onNavigateToDiagnosis = { diagId ->
-                selectedChapterId = 5
+                selectedChapterId = 2
                 onDiagnosisSelected(diagId)
                 onSearchChange("")
             }
@@ -938,27 +2052,32 @@ fun HandbuchScreen(
 
             Box(modifier = Modifier.weight(1f)) {
                 when (selectedChapterId) {
-                    1 -> Chapter1View(
-                        onSelectPhase = { phaseId ->
-                            selectedChapterId = 4
-                            onPhaseSelected(phaseId)
-                        },
-                        onNavigateToTools = onNavigateToTools
-                    )
-                    2 -> Chapter2View(onNavigateToTools = onNavigateToTools)
-                    3 -> Chapter3View(onNavigateToTools = onNavigateToTools)
-                    4 -> PhasenScreen(
+                    1 -> PhasenScreen(
                         selectedPhaseId = selectedPhaseId,
                         onPhaseSelected = onPhaseSelected,
-                        cmsSections = cmsSections
+                        cmsSections = cmsSections,
+                        breathingPhase = breathingPhase,
+                        breathingSeconds = breathingSeconds,
+                        breathingCycles = breathingCycles,
+                        onStartBreathing = onStartBreathing,
+                        onStopBreathing = onStopBreathing,
+                        crisisPlans = crisisPlans,
+                        onSaveCrisisPlan = onSaveCrisisPlan,
+                        onDeleteCrisisPlan = onDeleteCrisisPlan,
+                        incidentReviews = incidentReviews,
+                        onSaveIncidentReview = onSaveIncidentReview,
+                        onDeleteIncidentReview = onDeleteIncidentReview,
+                        teamLearnings = teamLearnings,
+                        onSaveTeamLearning = onSaveTeamLearning,
+                        onDeleteTeamLearning = onDeleteTeamLearning,
+                        icdDiagnoses = icdDiagnoses
                     )
-                    5 -> DiagnosenScreen(
+                    2 -> DiagnosenScreen(
                         selectedDiagnosisId = selectedDiagnosisId,
                         onDiagnosisSelected = onDiagnosisSelected,
                         icdDiagnoses = icdDiagnoses
                     )
-                    6 -> Chapter6View(onNavigateToTools = onNavigateToTools)
-                    7 -> Chapter7View(onNavigateToTools = onNavigateToTools)
+                    3 -> Chapter7View(onNavigateToTools = { _, _ -> })
                 }
             }
         }
@@ -1200,13 +2319,9 @@ fun TableOfContentsView(
         }
 
         val chapters = listOf(
-            Triple(1, "Das 5-Farben-Modell", "Schnellreferenz · Phasenübersicht · Teamsprache"),
-            Triple(2, "Neurobiologie", "Polyvagal-Theorie · Amygdala Hijack · Kortisol-Latenz · Co-Regulation · Mentalisierung"),
-            Triple(3, "Haltung & Kommunikation", "Professionelle Haltung · Körpersprache · Stimme · Scham · GFK · Validation · DBT STOP"),
-            Triple(4, "Die 5 Phasen im Detail", "WEISS / GRÜN · GELB · ROT · BLAU - je mit Erkennungszeichen, Interventionen und Grenzen"),
-            Triple(5, "Diagnosen", "ADHS · EIPS · PTBS · ASS · Psychose · Störung des Sozialverhaltens"),
-            Triple(6, "Team & Nachbereitung", "Rollenverteilung · Splitting · Post-Incident-Review · Supervision · Selbstfürsorge"),
-            Triple(7, "Referenzen", "Wissenschaftliche Grundlagen und Literaturangaben")
+            Triple(1, "Das 5-Phasen-Deeskalationsmodell", "Phasenübersicht · Integrierte Deeskalations-Interaktionen · Theorie & Praxis-Werkzeuge"),
+            Triple(2, "Klinische Diagnoserichtlinien", "Krankheitsbilder in der KJP · Spezifische Handlungsleitlinien · ICD-11 Integration"),
+            Triple(3, "Quellen- und Literaturverzeichnis", "Klinische Standardwerke · Evidenzbasierte Studien · Wissenschaftlicher Apparat")
         )
 
         items(chapters) { (id, title, contents) ->
@@ -5101,6 +6216,12 @@ fun IcdSymptomWorkspaceScreen(
     onImportIcdEntity: (com.example.data.IcdSearchEntity) -> Unit
 ) {
     var queryInput by remember { mutableStateOf(searchQuery) }
+    
+    // Sync external query state changes (like clicking the quick KJP loader buttons) to the internal text field edit state
+    LaunchedEffect(searchQuery) {
+        queryInput = searchQuery
+    }
+    
     var selectedDiagIdForEditing by remember { mutableStateOf<String?>(null) }
     var showCreateCustomDialog by remember { mutableStateOf(false) }
 
@@ -5222,6 +6343,112 @@ fun IcdSymptomWorkspaceScreen(
                         Icon(imageVector = Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Suchen", fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        // Kinder- & Jugendpsychiatrie (KJP) API Schnelllade-Banner
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("kjp_api_promo_card"),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
+                ),
+                border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(10.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Face,
+                            contentDescription = "Kinder- und Jugendpsychiatrie",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Fachbereich: Kinder- & Jugendpsychiatrie",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Laden Sie deeskalationsrelevante ICD-11 Krankheitsbilder wie ADHS, ASS, PTBS & Störungen des Sozialverhaltens direkt über die WHO-Schnittstelle herunter.",
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = {
+                                    queryInput = "Kinder und Jugendpsychiatrie"
+                                    onSearchQueryChange("Kinder und Jugendpsychiatrie")
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                ),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("kjp_api_download_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("API-Inhalte laden", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            FilledTonalButton(
+                                onClick = {
+                                    queryInput = "6A05"
+                                    onSearchQueryChange("6A05")
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("btn_quick_adhs")
+                            ) {
+                                Text("6A05 ADHS", fontSize = 10.sp)
+                            }
+
+                            FilledTonalButton(
+                                onClick = {
+                                    queryInput = "6A02"
+                                    onSearchQueryChange("6A02")
+                                },
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("btn_quick_ass")
+                            ) {
+                                Text("6A02 ASS", fontSize = 10.sp)
+                            }
+                        }
                     }
                 }
             }

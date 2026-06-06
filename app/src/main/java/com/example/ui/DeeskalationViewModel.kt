@@ -193,17 +193,22 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
     val breathingCycleCount: StateFlow<Int> = _breathingCycleCount.asStateFlow()
 
     private var breathingJob: Job? = null
+    private var icdSearchJob: Job? = null
 
     fun searchIcdWebOrLocal(query: String) {
         _searchQuery.value = query
         if (query.trim().isEmpty()) {
+            icdSearchJob?.cancel()
             _icdSearchResults.value = emptyList()
+            _icdSearchInProgress.value = false
             return
         }
 
+        icdSearchJob?.cancel()
         _icdSearchInProgress.value = true
         _icdSearchError.value = null
-        viewModelScope.launch {
+        
+        icdSearchJob = viewModelScope.launch {
             try {
                 // Safely read WHO client keys from Secrets-injected BuildConfig
                 val clientId = com.example.BuildConfig.ICD_CLIENT_ID
@@ -215,10 +220,15 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
                     Log.d("DeeskalationViewModel", "No live Results returned. Local database search remains active.")
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) {
+                    throw e
+                }
                 Log.e("DeeskalationViewModel", "WHO live API search failed: ${e.message}")
                 _icdSearchError.value = "Konnte ICD-Katalog nicht laden: ${e.localizedMessage}"
             } finally {
-                _icdSearchInProgress.value = false
+                if (icdSearchJob == coroutineContext[Job]) {
+                    _icdSearchInProgress.value = false
+                }
             }
         }
     }
