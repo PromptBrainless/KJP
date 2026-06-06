@@ -362,11 +362,13 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
         trigger: String,
         warningSigns: String,
         calming: String,
-        worsening: String
+        worsening: String,
+        id: Int = 0
     ) {
         viewModelScope.launch {
             repository.insertCrisisPlan(
                 CrisisPlan(
+                    id = id,
                     patientInitials = initials,
                     mainDiagnosis = diagnosisId,
                     individualTrigger = trigger,
@@ -391,11 +393,13 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
         trig: String,
         strengths: String,
         lessons: String,
-        wellbeing: String
+        wellbeing: String,
+        id: Int = 0
     ) {
         viewModelScope.launch {
             repository.insertIncidentReview(
                 IncidentReview(
+                    id = id,
                     patientInitials = initials,
                     incidentDate = dateString,
                     description = descr,
@@ -446,10 +450,11 @@ class DeeskalationViewModel(private val repository: DeeskalationRepository) : Vi
     }
 
     // Team Learning Actions ("Was hat funktioniert?")
-    fun saveTeamLearning(situation: String, whatWorked: String, submittedByRole: String) {
+    fun saveTeamLearning(situation: String, whatWorked: String, submittedByRole: String, id: Int = 0) {
         viewModelScope.launch {
             repository.insertTeamLearning(
                 TeamLearning(
+                    id = id,
                     situation = situation,
                     whatWorked = whatWorked,
                     submittedByRole = submittedByRole

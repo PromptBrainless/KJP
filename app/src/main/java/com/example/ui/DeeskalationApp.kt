@@ -273,18 +273,18 @@ fun DeeskalationApp(viewModel: DeeskalationViewModel) {
                         onStartBreathing = { viewModel.startBreathing() },
                         onStopBreathing = { viewModel.stopBreathing() },
                         crisisPlans = crisisPlans,
-                        onSaveCrisisPlan = { init, diag, trig, warn, calm, worsening ->
-                            viewModel.saveCrisisPlan(init, diag, trig, warn, calm, worsening)
+                        onSaveCrisisPlan = { init, diag, trig, warn, calm, worsening, id ->
+                            viewModel.saveCrisisPlan(init, diag, trig, warn, calm, worsening, id)
                         },
                         onDeleteCrisisPlan = { id -> viewModel.deleteCrisisPlan(id) },
                         incidentReviews = incidentReviews,
-                        onSaveIncidentReview = { init, date, desc, trig, stren, less, wellbeing ->
-                            viewModel.saveIncidentReview(init, date, desc, trig, stren, less, wellbeing)
+                        onSaveIncidentReview = { init, date, desc, trig, stren, less, wellbeing, id ->
+                            viewModel.saveIncidentReview(init, date, desc, trig, stren, less, wellbeing, id)
                         },
                         onDeleteIncidentReview = { id -> viewModel.deleteIncidentReview(id) },
                         teamLearnings = teamLearnings,
-                        onSaveTeamLearning = { situation, help, role ->
-                            viewModel.saveTeamLearning(situation, help, role)
+                        onSaveTeamLearning = { situation, help, role, id ->
+                            viewModel.saveTeamLearning(situation, help, role, id)
                         },
                         onDeleteTeamLearning = { id -> viewModel.deleteTeamLearning(id) }
                     )
@@ -341,13 +341,13 @@ fun PhasenScreen(
     onStartBreathing: () -> Unit,
     onStopBreathing: () -> Unit,
     crisisPlans: List<CrisisPlan>,
-    onSaveCrisisPlan: (String, String, String, String, String, String) -> Unit,
+    onSaveCrisisPlan: (String, String, String, String, String, String, Int) -> Unit,
     onDeleteCrisisPlan: (Int) -> Unit,
     incidentReviews: List<IncidentReview>,
-    onSaveIncidentReview: (String, String, String, String, String, String, String) -> Unit,
+    onSaveIncidentReview: (String, String, String, String, String, String, String, Int) -> Unit,
     onDeleteIncidentReview: (Int) -> Unit,
     teamLearnings: List<TeamLearning>,
-    onSaveTeamLearning: (String, String, String) -> Unit,
+    onSaveTeamLearning: (String, String, String, Int) -> Unit,
     onDeleteTeamLearning: (Int) -> Unit,
     icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
@@ -389,6 +389,7 @@ fun PhasenScreen(
     var newLearningSit by remember { mutableStateOf("") }
     var newLearningWorked by remember { mutableStateOf("") }
     var newLearningRole by remember { mutableStateOf("Pflege") }
+    var editingLearningId by remember { mutableStateOf(0) }
     
     // Micro Report State
     var ptInitials by remember { mutableStateOf("") }
@@ -1588,7 +1589,12 @@ fun PhasenScreen(
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text(text = "Kollegiales Best-Practice Board", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = if (editingLearningId > 0) "Best-Practice Beitrag bearbeiten (ID: $editingLearningId)" else "Kollegiales Best-Practice Board",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "Was hat in einer Krise funktioniert? Teilen Sie Ihre Erfahrungen unaufgeregt und offline-verfügbar für das gesamte Team.",
@@ -1630,17 +1636,39 @@ fun PhasenScreen(
                             }
 
                             Spacer(modifier = Modifier.height(8.dp))
-                            Button(
-                                onClick = {
-                                    onSaveTeamLearning(newLearningSit, newLearningWorked, newLearningRole)
-                                    newLearningSit = ""
-                                    newLearningWorked = ""
-                                    Toast.makeText(context, "Erfahrung kollegial geteilt!", Toast.LENGTH_SHORT).show()
-                                },
-                                enabled = newLearningSit.isNotBlank() && newLearningWorked.isNotBlank(),
-                                modifier = Modifier.fillMaxWidth().testTag("save_team_learning_button")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text("Auf Board posten")
+                                if (editingLearningId > 0) {
+                                    TextButton(
+                                        onClick = {
+                                            editingLearningId = 0
+                                            newLearningSit = ""
+                                            newLearningWorked = ""
+                                            newLearningRole = "Pflege"
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Abbrechen")
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        onSaveTeamLearning(newLearningSit, newLearningWorked, newLearningRole, editingLearningId)
+                                        editingLearningId = 0
+                                        newLearningSit = ""
+                                        newLearningWorked = ""
+                                        Toast.makeText(context, "Best-Practice updated/posted!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    enabled = newLearningSit.isNotBlank() && newLearningWorked.isNotBlank(),
+                                    modifier = Modifier
+                                        .weight(if (editingLearningId > 0) 2f else 1f)
+                                        .testTag("save_team_learning_button")
+                                ) {
+                                    Text(if (editingLearningId > 0) "Speichern" else "Auf Board posten")
+                                }
                             }
                         }
                     }
@@ -1691,6 +1719,18 @@ fun PhasenScreen(
                                         }
                                         Spacer(modifier = Modifier.width(6.dp))
                                         IconButton(
+                                            onClick = {
+                                                editingLearningId = learning.id
+                                                newLearningSit = learning.situation
+                                                newLearningWorked = learning.whatWorked
+                                                newLearningRole = learning.submittedByRole
+                                            },
+                                            modifier = Modifier.size(24.dp).testTag("edit_learning_${learning.id}")
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = "Bearbeiten", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        IconButton(
                                             onClick = { onDeleteTeamLearning(learning.id) },
                                             modifier = Modifier.size(24.dp).testTag("delete_learning_${learning.id}")
                                         ) {
@@ -1736,6 +1776,7 @@ fun DiagnosenScreen(
     onDiagnosisSelected: (String) -> Unit,
     icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
+    val context = LocalContext.current
     val currentDiagnosis = icdDiagnoses.firstOrNull { it.codeOrId == selectedDiagnosisId } ?: icdDiagnoses.firstOrNull()
 
     if (currentDiagnosis == null) {
@@ -1871,6 +1912,36 @@ fun DiagnosenScreen(
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                            .clickable {
+                                val cleanSearch = currentDiagnosis.code.ifBlank { currentDiagnosis.codeOrId }
+                                val intent = android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW, 
+                                    android.net.Uri.parse("https://icd.who.int/browse11/l-m/en#/?q=$cleanSearch")
+                                )
+                                context.startActivity(intent)
+                            }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Original-Katalogeintrag im WHO ICD-11 Webportal abrufen",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }
@@ -1977,13 +2048,13 @@ fun HandbuchScreen(
     onStartBreathing: () -> Unit,
     onStopBreathing: () -> Unit,
     crisisPlans: List<CrisisPlan>,
-    onSaveCrisisPlan: (String, String, String, String, String, String) -> Unit,
+    onSaveCrisisPlan: (String, String, String, String, String, String, Int) -> Unit,
     onDeleteCrisisPlan: (Int) -> Unit,
     incidentReviews: List<IncidentReview>,
-    onSaveIncidentReview: (String, String, String, String, String, String, String) -> Unit,
+    onSaveIncidentReview: (String, String, String, String, String, String, String, Int) -> Unit,
     onDeleteIncidentReview: (Int) -> Unit,
     teamLearnings: List<TeamLearning>,
-    onSaveTeamLearning: (String, String, String) -> Unit,
+    onSaveTeamLearning: (String, String, String, Int) -> Unit,
     onDeleteTeamLearning: (Int) -> Unit
 ) {
     var selectedChapterId by remember { mutableStateOf<Int?>(null) }
@@ -3824,11 +3895,11 @@ fun ToolsScreen(
     onToolsSubTabChange: (String) -> Unit,
     onStartBreathing: () -> Unit,
     onStopBreathing: () -> Unit,
-    onSaveCrisisPlan: (String, String, String, String, String, String) -> Unit,
+    onSaveCrisisPlan: (String, String, String, String, String, String, Int) -> Unit,
     onDeleteCrisisPlan: (Int) -> Unit,
-    onSaveIncidentReview: (String, String, String, String, String, String, String) -> Unit,
+    onSaveIncidentReview: (String, String, String, String, String, String, String, Int) -> Unit,
     onDeleteIncidentReview: (Int) -> Unit,
-    onSaveTeamLearning: (String, String, String) -> Unit,
+    onSaveTeamLearning: (String, String, String, Int) -> Unit,
     onDeleteTeamLearning: (Int) -> Unit,
     icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
@@ -3899,6 +3970,7 @@ fun ToolsScreen(
     var newLearningSit by remember { mutableStateOf("") }
     var newLearningWorked by remember { mutableStateOf("") }
     var newLearningRole by remember { mutableStateOf("Pflege") }
+    var editingLearningId by remember { mutableStateOf(0) }
 
     LazyColumn(
         modifier = Modifier
@@ -4854,7 +4926,12 @@ fun ToolsScreen(
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text(text = "Kollegiales Best-Practice Board", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = if (editingLearningId > 0) "Best-Practice Beitrag bearbeiten (ID: $editingLearningId)" else "Kollegiales Best-Practice Board", 
+                                fontWeight = FontWeight.Bold, 
+                                fontSize = 15.sp, 
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "Was hat in einer eskalativen Situation funktioniert? Teilen Sie Ihre Erfahrungen unaufgeregt und offline-verfügbar für das gesamte Team.",
@@ -4896,17 +4973,39 @@ fun ToolsScreen(
                             }
 
                             Spacer(modifier = Modifier.height(10.dp))
-                            Button(
-                                onClick = {
-                                    onSaveTeamLearning(newLearningSit, newLearningWorked, newLearningRole)
-                                    newLearningSit = ""
-                                    newLearningWorked = ""
-                                    Toast.makeText(context, "Erfahrung kollegial geteilt!", Toast.LENGTH_SHORT).show()
-                                },
-                                enabled = newLearningSit.isNotBlank() && newLearningWorked.isNotBlank(),
-                                modifier = Modifier.fillMaxWidth().testTag("save_team_learning_button")
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text("Auf Board posten")
+                                if (editingLearningId > 0) {
+                                    TextButton(
+                                        onClick = {
+                                            editingLearningId = 0
+                                            newLearningSit = ""
+                                            newLearningWorked = ""
+                                            newLearningRole = "Pflege"
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Abbrechen")
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        onSaveTeamLearning(newLearningSit, newLearningWorked, newLearningRole, editingLearningId)
+                                        editingLearningId = 0
+                                        newLearningSit = ""
+                                        newLearningWorked = ""
+                                        Toast.makeText(context, "Erfahrung kollegial geteilt!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    enabled = newLearningSit.isNotBlank() && newLearningWorked.isNotBlank(),
+                                    modifier = Modifier
+                                        .weight(if (editingLearningId > 0) 2f else 1f)
+                                        .testTag("save_team_learning_button")
+                                ) {
+                                    Text(if (editingLearningId > 0) "Speichern" else "Auf Board posten")
+                                }
                             }
                         }
                     }
@@ -4956,6 +5055,18 @@ fun ToolsScreen(
                                             Text(text = learning.submittedByRole, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), fontWeight = FontWeight.Bold)
                                         }
                                         Spacer(modifier = Modifier.width(6.dp))
+                                        IconButton(
+                                            onClick = {
+                                                editingLearningId = learning.id
+                                                newLearningSit = learning.situation
+                                                newLearningWorked = learning.whatWorked
+                                                newLearningRole = learning.submittedByRole
+                                            },
+                                            modifier = Modifier.size(24.dp).testTag("edit_learning_${learning.id}")
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = "Bearbeiten", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         IconButton(
                                             onClick = { onDeleteTeamLearning(learning.id) },
                                             modifier = Modifier.size(24.dp).testTag("delete_learning_${learning.id}")
@@ -5184,11 +5295,12 @@ fun BreathingGuideComponent(
 @Composable
 fun CrisisPlanWorkspaceSection(
     crisisPlans: List<CrisisPlan>,
-    onSaveCrisisPlan: (String, String, String, String, String, String) -> Unit,
+    onSaveCrisisPlan: (String, String, String, String, String, String, Int) -> Unit,
     onDeleteCrisisPlan: (Int) -> Unit,
     icdDiagnoses: List<com.example.data.IcdDiagnosis>
 ) {
     var showForm by remember { mutableStateOf(false) }
+    var editingId by remember { mutableStateOf(0) }
 
     var initials by remember { mutableStateOf("") }
     var selectedDiagId by remember { mutableStateOf("EIPS") }
@@ -5212,7 +5324,17 @@ fun CrisisPlanWorkspaceSection(
                 color = MaterialTheme.colorScheme.onBackground
             )
             Button(
-                onClick = { showForm = !showForm },
+                onClick = { 
+                    showForm = !showForm
+                    if (!showForm) {
+                        editingId = 0
+                        initials = ""
+                        triggerText = ""
+                        warningText = ""
+                        calmingText = ""
+                        worseningText = ""
+                    }
+                },
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.testTag("toggle_crisis_form_button")
             ) {
@@ -5236,7 +5358,7 @@ fun CrisisPlanWorkspaceSection(
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Krisenplan eintragen (WEISS/GRÜN Interaktion)",
+                        text = if (editingId > 0) "Krisenplan bearbeiten (ID: $editingId)" else "Krisenplan eintragen (WEISS/GRÜN Interaktion)",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -5327,33 +5449,60 @@ fun CrisisPlanWorkspaceSection(
                         label = { Text("Was die Krise verschlimmert (Absolute Don'ts)") }
                     )
 
-                    Button(
-                        onClick = {
-                            if (initials.trim().isEmpty() || triggerText.trim().isEmpty()) {
-                                // show simple toast if fields empty
-                            } else {
-                                onSaveCrisisPlan(
-                                    initials,
-                                    selectedDiagId,
-                                    triggerText,
-                                    warningText,
-                                    calmingText,
-                                    worseningText
-                                )
-                                // clear
-                                initials = ""
-                                triggerText = ""
-                                warningText = ""
-                                calmingText = ""
-                                worseningText = ""
-                                showForm = false
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("save_crisis_plan_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(text = "Speichern & im Team teilen", fontWeight = FontWeight.Bold)
+                        if (editingId > 0) {
+                            TextButton(
+                                onClick = {
+                                    editingId = 0
+                                    initials = ""
+                                    triggerText = ""
+                                    warningText = ""
+                                    calmingText = ""
+                                    worseningText = ""
+                                    showForm = false
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Abbrechen")
+                            }
+                        }
+                        
+                        Button(
+                            onClick = {
+                                if (initials.trim().isEmpty() || triggerText.trim().isEmpty()) {
+                                    // show simple toast if fields empty
+                                } else {
+                                    onSaveCrisisPlan(
+                                        initials,
+                                        selectedDiagId,
+                                        triggerText,
+                                        warningText,
+                                        calmingText,
+                                        worseningText,
+                                        editingId
+                                    )
+                                    // clear
+                                    initials = ""
+                                    triggerText = ""
+                                    warningText = ""
+                                    calmingText = ""
+                                    worseningText = ""
+                                    editingId = 0
+                                    showForm = false
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(if (editingId > 0) 2f else 1f)
+                                .testTag("save_crisis_plan_button")
+                        ) {
+                            Text(
+                                text = if (editingId > 0) "Änderungen speichern" else "Speichern & im Team teilen",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -5402,7 +5551,7 @@ fun CrisisPlanWorkspaceSection(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                 Box(
                                     modifier = Modifier
                                         .size(32.dp)
@@ -5433,15 +5582,39 @@ fun CrisisPlanWorkspaceSection(
                                 }
                             }
 
-                            IconButton(
-                                onClick = { onDeleteCrisisPlan(plan.id) },
-                                modifier = Modifier.testTag("delete_plan_${plan.id}")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Plan löschen",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                IconButton(
+                                    onClick = {
+                                        editingId = plan.id
+                                        initials = plan.patientInitials
+                                        selectedDiagId = plan.mainDiagnosis
+                                        triggerText = plan.individualTrigger
+                                        warningText = plan.earlyWarningSigns
+                                        calmingText = plan.preferredCalming
+                                        worseningText = plan.whatVerschlimmert
+                                        showForm = true
+                                    },
+                                    modifier = Modifier.testTag("edit_plan_${plan.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Plan editieren",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                
+                                IconButton(
+                                    onClick = { onDeleteCrisisPlan(plan.id) },
+                                    modifier = Modifier.testTag("delete_plan_${plan.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Plan löschen",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -5480,10 +5653,11 @@ fun CrisisPlanWorkspaceSection(
 @Composable
 fun IncidentReviewWorkspaceSection(
     reviews: List<IncidentReview>,
-    onSaveIncidentReview: (String, String, String, String, String, String, String) -> Unit,
+    onSaveIncidentReview: (String, String, String, String, String, String, String, Int) -> Unit,
     onDeleteIncidentReview: (Int) -> Unit
 ) {
     var showForm by remember { mutableStateOf(false) }
+    var editingId by remember { mutableStateOf(0) }
 
     var initials by remember { mutableStateOf("") }
     var incidentDate by remember { mutableStateOf("") }
@@ -5510,7 +5684,20 @@ fun IncidentReviewWorkspaceSection(
             Button(
                 onClick = {
                     showForm = !showForm
-                    incidentDate = dateFormat.format(Date())
+                    if (showForm) {
+                        if (editingId == 0) {
+                            incidentDate = dateFormat.format(Date())
+                        }
+                    } else {
+                        editingId = 0
+                        initials = ""
+                        incidentDate = ""
+                        descr = ""
+                        triggerText = ""
+                        teamStrengths = ""
+                        lessonsLearned = ""
+                        teamWellbeing = ""
+                    }
                 },
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.testTag("toggle_review_form_button")
@@ -5535,7 +5722,7 @@ fun IncidentReviewWorkspaceSection(
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Incident Review & Teambegleitung (Phase BLAU)",
+                        text = if (editingId > 0) "Incident Review editieren (ID: $editingId)" else "Incident Review & Teambegleitung (Phase BLAU)",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.primary
@@ -5613,36 +5800,65 @@ fun IncidentReviewWorkspaceSection(
                         label = { Text("Befinden & Selbstfürsorge des Teams") }
                     )
 
-                    Button(
-                        onClick = {
-                            if (initials.trim().isEmpty() || descr.trim().isEmpty()) {
-                                // invalid fields check
-                            } else {
-                                onSaveIncidentReview(
-                                    initials,
-                                    incidentDate,
-                                    descr,
-                                    triggerText,
-                                    teamStrengths,
-                                    lessonsLearned,
-                                    teamWellbeing
-                                )
-                                // clear
-                                initials = ""
-                                incidentDate = ""
-                                descr = ""
-                                triggerText = ""
-                                teamStrengths = ""
-                                lessonsLearned = ""
-                                teamWellbeing = ""
-                                showForm = false
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("save_review_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(text = "Review speichern", fontWeight = FontWeight.Bold)
+                        if (editingId > 0) {
+                            TextButton(
+                                onClick = {
+                                    editingId = 0
+                                    initials = ""
+                                    incidentDate = ""
+                                    descr = ""
+                                    triggerText = ""
+                                    teamStrengths = ""
+                                    lessonsLearned = ""
+                                    teamWellbeing = ""
+                                    showForm = false
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Abbrechen")
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                if (initials.trim().isEmpty() || descr.trim().isEmpty()) {
+                                    // invalid fields check
+                                } else {
+                                    onSaveIncidentReview(
+                                        initials,
+                                        incidentDate,
+                                        descr,
+                                        triggerText,
+                                        teamStrengths,
+                                        lessonsLearned,
+                                        teamWellbeing,
+                                        editingId
+                                    )
+                                    // clear
+                                    initials = ""
+                                    incidentDate = ""
+                                    descr = ""
+                                    triggerText = ""
+                                    teamStrengths = ""
+                                    lessonsLearned = ""
+                                    teamWellbeing = ""
+                                    editingId = 0
+                                    showForm = false
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(if (editingId > 0) 2f else 1f)
+                                .testTag("save_review_button")
+                        ) {
+                            Text(
+                                text = if (editingId > 0) "Änderungen speichern" else "Review speichern",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -5681,61 +5897,86 @@ fun IncidentReviewWorkspaceSection(
         } else {
             reviews.forEach { r ->
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                     modifier = Modifier.fillMaxWidth(),
+                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.tertiaryContainer),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = r.patientInitials.take(2).uppercase(),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text(
-                                        text = "Review: ${r.patientInitials}",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
-                                    )
-                                    Text(
-                                        text = "Vorfallsdatum: ${r.incidentDate}",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.secondary
-                                    )
-                                }
-                            }
+                     Column(modifier = Modifier.padding(14.dp)) {
+                         Row(
+                             modifier = Modifier.fillMaxWidth(),
+                             horizontalArrangement = Arrangement.SpaceBetween,
+                             verticalAlignment = Alignment.CenterVertically
+                         ) {
+                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                 Box(
+                                     modifier = Modifier
+                                         .size(32.dp)
+                                         .clip(CircleShape)
+                                         .background(MaterialTheme.colorScheme.tertiaryContainer),
+                                     contentAlignment = Alignment.Center
+                                 ) {
+                                     Text(
+                                         text = r.patientInitials.take(2).uppercase(),
+                                         fontWeight = FontWeight.Bold,
+                                         fontSize = 12.sp,
+                                         color = MaterialTheme.colorScheme.onTertiaryContainer
+                                     )
+                                 }
+                                 Spacer(modifier = Modifier.width(8.dp))
+                                 Column {
+                                     Text(
+                                         text = "Review: ${r.patientInitials}",
+                                         fontWeight = FontWeight.Bold,
+                                         fontSize = 14.sp
+                                     )
+                                     Text(
+                                         text = "Vorfallsdatum: ${r.incidentDate}",
+                                         fontSize = 11.sp,
+                                         color = MaterialTheme.colorScheme.secondary
+                                     )
+                                 }
+                             }
 
-                            IconButton(
-                                onClick = { onDeleteIncidentReview(r.id) },
-                                modifier = Modifier.testTag("delete_review_${r.id}")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Eintrag löschen",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
+                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                 IconButton(
+                                     onClick = {
+                                         editingId = r.id
+                                         initials = r.patientInitials
+                                         incidentDate = r.incidentDate
+                                         descr = r.description
+                                         triggerText = r.triggerSource
+                                         teamStrengths = r.teamStrengths
+                                         lessonsLearned = r.lessonsLearned
+                                         teamWellbeing = r.teamWellbeing
+                                         showForm = true
+                                     },
+                                     modifier = Modifier.testTag("edit_review_${r.id}")
+                                 ) {
+                                     Icon(
+                                         imageVector = Icons.Default.Edit,
+                                         contentDescription = "Review editieren",
+                                         tint = MaterialTheme.colorScheme.primary,
+                                         modifier = Modifier.size(18.dp)
+                                     )
+                                 }
+                                 
+                                 IconButton(
+                                     onClick = { onDeleteIncidentReview(r.id) },
+                                     modifier = Modifier.testTag("delete_review_${r.id}")
+                                 ) {
+                                     Icon(
+                                         imageVector = Icons.Default.Delete,
+                                         contentDescription = "Eintrag löschen",
+                                         tint = MaterialTheme.colorScheme.error,
+                                         modifier = Modifier.size(18.dp)
+                                     )
+                                 }
+                             }
+                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
-                        Spacer(modifier = Modifier.height(8.dp))
+                         Spacer(modifier = Modifier.height(8.dp))
+                         Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                         Spacer(modifier = Modifier.height(8.dp))
 
                         InfoRowDetail(label = "Fakten & Ablauf:", value = r.description)
                         InfoRowDetail(label = "Auslöser (Trigger):", value = r.triggerSource)
@@ -6519,18 +6760,42 @@ fun IcdSymptomWorkspaceScreen(
                                 )
                             }
                             Spacer(modifier = Modifier.width(8.dp))
-                            Button(
-                                onClick = {
-                                    onImportIcdEntity(result)
-                                    android.widget.Toast.makeText(context, "${result.title} erfolgreich importiert!", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.testTag("import_${result.id.lowercase()}")
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(12.dp))
-                                Spacer(modifier = Modifier.width(2.dp))
-                                Text("Importieren", fontSize = 10.sp)
+                                IconButton(
+                                    onClick = {
+                                        val cleanSearch = result.theCode ?: result.id
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW, 
+                                            android.net.Uri.parse("https://icd.who.int/browse11/l-m/en#/?q=$cleanSearch")
+                                        )
+                                        context.startActivity(intent)
+                                    },
+                                    modifier = Modifier.size(32.dp).testTag("who_web_${result.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "WHO Originaleintrag öffnen",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        onImportIcdEntity(result)
+                                        android.widget.Toast.makeText(context, "${result.title} erfolgreich importiert!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.testTag("import_${result.id.lowercase()}")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(12.dp))
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text("Importieren", fontSize = 10.sp)
+                                }
                             }
                         }
                         if (result.definition != null) {
@@ -6933,6 +7198,38 @@ fun IcdSymptomWorkspaceScreen(
                                         )
                                     }
                                 }
+                            }
+
+                            // WHO reference link
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        val cleanSearch = diag.code.ifBlank { diag.codeOrId }
+                                        val intent = android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW, 
+                                            android.net.Uri.parse("https://icd.who.int/browse11/l-m/en#/?q=$cleanSearch")
+                                        )
+                                        context.startActivity(intent)
+                                    }
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "WHO ICD-11 Originaleintrag im Webportal ansehen",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
                     }
